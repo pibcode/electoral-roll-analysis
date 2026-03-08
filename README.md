@@ -1,16 +1,174 @@
-# React + Vite
+# Electoral Integrity Monitor v1.0
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A local web app to analyze electoral roll Excel files.
 
-Currently, two official plugins are available:
+It helps you:
+- load one or many voter roll `.xlsx` files
+- detect duplicates (row-level and same-content files)
+- review uncertain classifications
+- run statistical comparisons
+- export reports, charts, and data
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+---
 
-## React Compiler
+## 1. What You Need (Super Simple)
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+You need 2 things on your computer:
 
-## Expanding the ESLint configuration
+1. **Node.js** (version 18 or newer)
+2. **npm** (comes with Node.js)
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+Check if you already have them:
+
+```bash
+node -v
+npm -v
+```
+
+If both commands show version numbers, you are ready.
+
+---
+
+## 2. Run Locally (Like a 10-Year-Old Tutorial)
+
+### Step A: Open the project folder
+
+Open terminal in this folder:
+
+`elctoral_roll_analysis`
+
+### Step B: Install packages (only first time)
+
+```bash
+npm install
+```
+
+### Step C: Start the app
+
+```bash
+npm run dev
+```
+
+### Step D: Open browser
+
+Terminal will show a link like:
+
+`http://localhost:5173`
+
+Open that link.
+
+That is it. App is running.
+
+---
+
+## 3. Build for Production
+
+```bash
+npm run build
+```
+
+This creates a `dist/` folder (optimized app).
+
+To preview production build locally:
+
+```bash
+npm run preview
+```
+
+---
+
+## 4. Deploy to Vercel (Easy Mode)
+
+## Option A: Website method (recommended for beginners)
+
+1. Push your code to GitHub.
+2. Go to https://vercel.com
+3. Sign in with GitHub.
+4. Click **Add New Project**.
+5. Choose this repo.
+6. Keep defaults:
+   - Framework: `Vite`
+   - Build command: `npm run build`
+   - Output directory: `dist`
+7. Click **Deploy**.
+
+Done. Vercel gives you a live URL.
+
+## Option B: CLI method
+
+```bash
+npm i -g vercel
+vercel login
+vercel
+```
+
+Follow terminal questions.
+
+---
+
+## 5. Excel File Format (Minimum Required Columns)
+
+Sheet name must be:
+
+`Voter Roll`
+
+Required columns:
+
+- `name`
+- `relation_name`
+- `voter_id`
+- `serial_no`
+- `part_no`
+- `age`
+- `gender`
+- `stamp_type`
+
+Optional columns:
+
+- `ac_no`
+- `ac_name`
+- `house_no`
+- `page_no`
+- `relation_type`
+
+---
+
+## 6. Common Problems and Fixes
+
+## Problem: App not opening
+
+Try:
+
+```bash
+npm install
+npm run dev
+```
+
+## Problem: Port already used
+
+Run:
+
+```bash
+npm run dev -- --port 5174
+```
+
+Then open `http://localhost:5174`.
+
+## Problem: Build fails
+
+Check Node version:
+
+```bash
+node -v
+```
+
+Use Node 18+.
+
+---
+
+## 7. Notes
+
+- This app runs fully in browser by default.
+- Your files are processed locally unless you connect external services.
+- Use exported reports responsibly and verify conclusions with domain experts.
+

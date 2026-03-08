@@ -190,6 +190,17 @@ function bhAdjust(pvals){
   return q;
 }
 
+function normalizeHexColor(v, fallback="#ffffff"){
+  const s=String(v||"").trim();
+  if(/^#[0-9a-fA-F]{6}$/.test(s)) return s;
+  if(/^#[0-9a-fA-F]{3}$/.test(s)){
+    const r=s[1], g=s[2], b=s[3];
+    return `#${r}${r}${g}${g}${b}${b}`;
+  }
+  if(/^#[0-9a-fA-F]{8}$/.test(s)) return `#${s.slice(1,7)}`; // strip alpha
+  return fallback;
+}
+
 // ── Small UI primitives ──────────────────────────────────────────────────────
 const Tag=({c="children",color=C.blue,bg,style={}})=>(
   <span style={{display:"inline-block",padding:"1px 7px",borderRadius:4,fontSize:11,
@@ -256,7 +267,7 @@ async function exportChartGraphic({
   canvas.height=Math.max(1,Math.round(height*scale));
   const ctx=canvas.getContext("2d");
   if(!ctx) throw new Error("Canvas context unavailable");
-  ctx.fillStyle=background;
+  ctx.fillStyle=normalizeHexColor(background,"#ffffff");
   ctx.fillRect(0,0,canvas.width,canvas.height);
   const svgW=img.width||svg.viewBox?.baseVal?.width||width;
   const svgH=img.height||svg.viewBox?.baseVal?.height||height;
@@ -545,12 +556,12 @@ function UploadScreen({onFiles,loading}){
       <div style={{maxWidth:700,width:"100%",padding:"0 24px"}}>
         <div style={{textAlign:"center",marginBottom:36}}>
           <div style={{fontSize:10,letterSpacing:5,color:C.dim,marginBottom:10,
-            textTransform:"uppercase",fontFamily:MONO}}>Electoral Integrity Monitor · v4.0</div>
+            textTransform:"uppercase",fontFamily:MONO}}>Electoral Integrity Monitor · v1.0</div>
           <h1 style={{fontSize:32,fontWeight:800,color:C.text,margin:"0 0 10px",letterSpacing:-1}}>
-            Voter Roll Bias Analyser
+            Electoral Roll Analysis Dashboard
           </h1>
           <p style={{color:C.muted,fontSize:13,maxWidth:500,margin:"0 auto 6px",lineHeight:1.7}}>
-            West Bengal 2026 · Name-based religion inference · Statistical bias detection
+            West Bengal 2026 · Data quality checks · Statistical anomaly analysis
           </p>
         </div>
         <div onDrop={e=>{e.preventDefault();const f=Array.from(e.dataTransfer.files).filter(x=>x.name.endsWith(".xlsx"));if(f.length)onFiles(f);}}
@@ -570,10 +581,10 @@ function UploadScreen({onFiles,loading}){
         </div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:10,marginTop:24}}>
           {[
-            ["🕌 Religion Engine v3","Suffix fallback · 5,184 tokens · tribal names added · column validation · Review queue for unknowns"],
-            ["📅 Age Cohorts","Self-mapped = age 40–44 (on 2002 roll) · New = 18–22 · per-cohort bias stats"],
-            ["⚖️ Bias Metrics","Adj/del rate by religion · Chi-square significance · p-value labels"],
-            ["🏪 Booth Explorer","Drilldown per part · 300-booth support · filters · manual religion edit · export"],
+            ["🧠 Classification", "Name + relation assisted classification · review queue · manual overrides"],
+            ["📊 Statistical Checks", "Adjudication/deletion rates · chi-square tests · trend decomposition"],
+            ["🧾 Duplicate Detection", "Row-level duplicates · same-content file hash detection"],
+            ["📦 Reporting", "One-click export pack (XLSX + charts + printable report)"],
           ].map(([t,d])=>(
             <div key={t} style={{padding:14,background:"#0d1526",borderRadius:8,border:`1px solid ${C.border}`}}>
               <div style={{fontWeight:700,color:C.text,marginBottom:4,fontSize:13}}>{t}</div>
@@ -591,6 +602,12 @@ export default function App(){
   const ww=useWindowWidth();
   const mobile=ww<640;
   const tablet=ww<1024;
+  const [theme,setTheme]=useState(()=>{
+    try{
+      const t=localStorage.getItem("eim_theme");
+      return t==="light"?"light":"dark";
+    }catch{return "dark";}
+  });
   const [voters,setVoters]=useState([]);
   const [overrides,setOverrides]=useState({}); // voter_id → religion
   const [loading,setLoading]=useState(false);
@@ -720,6 +737,16 @@ export default function App(){
   const fileRef=useRef();
   const tokenFileRef=useRef();
   const PAGE_SIZE=50;
+
+  useEffect(()=>{
+    const palette=theme==="light"?LIGHT_THEME:DARK_THEME;
+    Object.assign(C,palette);
+    try{ localStorage.setItem("eim_theme",theme); }catch{}
+    if(typeof document!=="undefined"){
+      document.body.style.background=C.bg;
+      document.body.style.color=C.text;
+    }
+  },[theme]);
 
   const importLabeledNamesFile=useCallback(async(file)=>{
     if(!file) return;
@@ -1405,9 +1432,9 @@ export default function App(){
       width:1400,
       height:800,
       scale:2,
-      background:"#ffffff",
+      background:normalizeHexColor(C.bg,"#ffffff"),
     });
-  },[]);
+  },[theme]);
 
   const runChartExport=useCallback(async()=>{
     if(!chartExportModal) return;
@@ -1423,7 +1450,7 @@ export default function App(){
           width:+cfg.width||1400,
           height:+cfg.height||800,
           scale:+cfg.scale||2,
-          background:cfg.background||"#ffffff",
+          background:normalizeHexColor(cfg.background,normalizeHexColor(C.bg,"#ffffff")),
         });
       }
       setChartExportModal(null);
@@ -3393,7 +3420,7 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
         position:"sticky",top:0,zIndex:30,background:C.bg}}>
         <div style={{flex:1,minWidth:0}}>
           {!mobile&&<div style={{fontSize:9,color:C.dim,letterSpacing:4,textTransform:"uppercase",fontFamily:MONO}}>
-            Electoral Integrity Monitor v4
+            Electoral Integrity Monitor v1.0
           </div>}
           <div style={{fontSize:mobile?12:14,fontWeight:800,color:C.text,letterSpacing:-0.5,
             whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
@@ -3401,6 +3428,11 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
           </div>
         </div>
         <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}>
+          <button onClick={()=>setTheme(t=>t==="dark"?"light":"dark")}
+            style={{padding:"4px 10px",background:C.panel,border:`1px solid ${C.border}`,
+              borderRadius:5,color:C.muted,fontSize:11,cursor:"pointer"}}>
+            {theme==="dark"?"☀ Light":"🌙 Dark"}
+          </button>
           {Object.keys(overrides).length>0&&!mobile&&(
             <span style={{fontSize:11,color:C.yellow,fontFamily:MONO}}>
               ✎ {Object.keys(overrides).length}
@@ -3779,8 +3811,8 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
                   </div>
                   <div>
                     <div style={{fontSize:11,color:C.dim,marginBottom:4}}>Background</div>
-                    <input type="color" value={chartExportModal.background||"#ffffff"}
-                      onChange={e=>setChartExportModal(m=>({...m,background:e.target.value}))}
+                    <input type="color" value={normalizeHexColor(chartExportModal.background,normalizeHexColor(C.bg,"#ffffff"))}
+                      onChange={e=>setChartExportModal(m=>({...m,background:normalizeHexColor(e.target.value,normalizeHexColor(C.bg,"#ffffff"))}))}
                       style={{width:"100%",height:34,padding:0,border:`1px solid ${C.border}`,borderRadius:6,background:C.bg}}/>
                   </div>
                 </>
