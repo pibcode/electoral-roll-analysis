@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from "react";
 import * as XLSX from "xlsx";
+import { toPng, toSvg } from "html-to-image";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, PieChart, Pie, Cell, LabelList,
@@ -81,16 +82,16 @@ function classifyReligion(name, relationName = "", SCORES = NAME_SCORES) {
 
   // --- Decision chain ---
   const p = _scoreTok(name);
-  // Strong signal from elector name alone → done
-  if (p.rel && p.rel !== "Uncertain") return { ...p, via: "name" };
-
   const s = _scoreTok(relationName);
-  // Strong signal from relation name alone → done
-  if (s.rel && s.rel !== "Uncertain") return { ...s, via: "relation" };
+  const hasRelation = String(relationName||"").trim().length>0;
 
-  // Neither name alone is decisive → combine both as evidence pool
+  // Enforce joint elector+relation evidence whenever relation name exists.
   const j = _scoreJoint(name, relationName);
-  if (j.rel && j.rel !== "Uncertain" && j.rel !== null) return j;
+  if (hasRelation && j.rel && j.rel !== "Uncertain" && j.rel !== null) return j;
+
+  // Fallback to single-name decisions only when joint is unavailable/uncertain.
+  if (p.rel && p.rel !== "Uncertain") return { ...p, via: "name" };
+  if (s.rel && s.rel !== "Uncertain") return { ...s, via: "relation" };
 
   // Suffix fallback on elector name
   const sf = _scoreSuffix(name);
@@ -120,6 +121,38 @@ function getAgeGroup(age) {
 }
 // ★ = self-mapped (were 18-20 in 2002, now 40-44)
 function isSelfMapped(age) { const a=parseInt(age); return a>=40&&a<=44; }
+function canonicalStatusFromStamp(stampType){
+  const s=String(stampType||"").trim().toUpperCase();
+  if(s.includes("ADJUDICATION") || s==="UA" || s==="UNDER ADJ" || s==="UNDER_ADJ") return "Under Adjudication";
+  if(s.includes("DELETED") || s==="DEL") return "Deleted";
+  return "Active";
+}
+function canonicalStampFromStatus(status){
+  if(status==="Under Adjudication") return "UNDER ADJUDICATION";
+  if(status==="Deleted") return "DELETED";
+  return "";
+}
+function uid(){
+  try{
+    if(typeof crypto!=="undefined" && crypto.randomUUID) return crypto.randomUUID();
+  }catch{}
+  return `uid_${Date.now()}_${Math.random().toString(36).slice(2,10)}`;
+}
+function tintHex(hex, factor=0){
+  const h=normalizeHexColor(hex,"#888888");
+  const n=(x)=>parseInt(x,16);
+  let r=n(h.slice(1,3)), g=n(h.slice(3,5)), b=n(h.slice(5,7));
+  if(factor>0){
+    r=Math.round(r+(255-r)*factor);
+    g=Math.round(g+(255-g)*factor);
+    b=Math.round(b+(255-b)*factor);
+  }else if(factor<0){
+    const f=1+factor;
+    r=Math.round(r*f); g=Math.round(g*f); b=Math.round(b*f);
+  }
+  const toHex=(v)=>Math.max(0,Math.min(255,v)).toString(16).padStart(2,"0");
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
 
 // ── Colours & theme ──────────────────────────────────────────────────────────
 const THEME_DARK = {
@@ -130,11 +163,12 @@ const THEME_DARK = {
   adj:"#ef4444", del:"#be123c", active:"#2563eb",
 };
 const THEME_LIGHT = {
-  bg:"#f7fafc", panel:"#ffffff", border:"#d9e2ec", text:"#102a43",
-  muted:"#486581", dim:"#829ab1", blue:"#1d4ed8", red:"#c81e1e",
-  orange:"#f97316", green:"#22c55e", yellow:"#fbbf24",
-  Muslim:"#0f766e", Hindu:"#b91c1c", Uncertain:"#b45309", Unknown:"#64748b",
-  adj:"#dc2626", del:"#9f1239", active:"#2563eb",
+  // Semi-light mode: still bright, but with stronger contrast and color depth.
+  bg:"#eaf1fb", panel:"#f7fbff", border:"#b7c9e4", text:"#0b2340",
+  muted:"#35506f", dim:"#5f7a99", blue:"#2459d3", red:"#c62828",
+  orange:"#d97706", green:"#159947", yellow:"#d4a40f",
+  Muslim:"#0f8f6f", Hindu:"#c43d3d", Uncertain:"#c28b0a", Unknown:"#5b6f86",
+  adj:"#d83b3b", del:"#9d174d", active:"#2c63db",
 };
 const C = { ...THEME_DARK };
 const FONT="'Inter','Segoe UI',sans-serif";
@@ -200,6 +234,14 @@ function normalizeHexColor(v, fallback="#ffffff"){
   if(/^#[0-9a-fA-F]{8}$/.test(s)) return `#${s.slice(1,7)}`; // strip alpha
   return fallback;
 }
+function isDarkHexColor(v){
+  const hex=normalizeHexColor(v,"#ffffff");
+  const r=parseInt(hex.slice(1,3),16);
+  const g=parseInt(hex.slice(3,5),16);
+  const b=parseInt(hex.slice(5,7),16);
+  const lum=(0.299*r+0.587*g+0.114*b)/255;
+  return lum<0.45;
+}
 
 // ── Small UI primitives ──────────────────────────────────────────────────────
 const Tag=({c="children",color=C.blue,bg,style={}})=>(
@@ -230,6 +272,42 @@ const SH=({children,sub,onExport})=>(
   </div>
 );
 
+const EXPORT_REGISTRY = [
+  { kind:"chart", tabId:"overview", containerId:"chartBias", filename:"overview_bias_assessment", title:"Bias Assessment", subtitle:"Comparative rate cards", chartType:"Comparative rate cards" },
+  { kind:"chart", tabId:"overview", containerId:"chartAdjPieBlock", filename:"overview_adj_religion_pie", title:"Under Adjudication by Religion", subtitle:"Distribution by religion", chartType:"Donut/Pie" },
+  { kind:"chart", tabId:"overview", containerId:"chartRelStatus", filename:"overview_status_by_religion", title:"Status by Religion", subtitle:"Count of voters in each status category by religion", chartType:"Grouped bars" },
+  { kind:"chart", tabId:"overview", containerId:"chartDiverg", filename:"overview_status_composition", title:"Voter Status Composition by Religion", subtitle:"Stacked composition by religion", chartType:"Horizontal stacked bar" },
+  { kind:"chart", tabId:"religion", containerId:"chartAdjRate", filename:"religion_adj_del_rate", title:"Rates by Religion", subtitle:"Adjudication and deletion rates by religion", chartType:"Horizontal bars" },
+  { kind:"chart", tabId:"religion", containerId:"chartH2H", filename:"religion_head_to_head", title:"Muslim vs Hindu: Under Adjudication", subtitle:"Head-to-head grouped comparison", chartType:"Grouped bars" },
+  { kind:"chart", tabId:"age", containerId:"chartAgeStatus", filename:"age_group_status", title:"Age Group x Status", subtitle:"Status distribution by age cohort", chartType:"Grouped bars" },
+  { kind:"chart", tabId:"age", containerId:"chartAgeTrend", filename:"age_cohort_trend", title:"Age Cohort Trends", subtitle:"Adj% trend by age", chartType:"Line chart" },
+  { kind:"chart", tabId:"custom", containerId:"chartCustomAnalytics", filename:"custom_analytics", title:"Custom Analytics", subtitle:"Configurable analytics chart", chartType:"Configurable" },
+  { kind:"chart", tabId:"trends", containerId:"chartPartPopulationBundle", filename:"part_population_composition", title:"Part Population Composition", subtitle:"Religion and status stacked by part", chartType:"Synchronized stacked bars" },
+  { kind:"chart", tabId:"trends", containerId:"chartPartTripleBars", filename:"part_triple_stacked", title:"Part Triple Stacked Bars", subtitle:"Population/UA/Deleted by dimension", chartType:"Triple synchronized stacked bars" },
+  { kind:"chart", tabId:"trends", containerId:"chartPartDonutGrid", filename:"part_targeting_donuts", title:"Part-wise Targeting Donuts", subtitle:"Muslim/Hindu split with status shades", chartType:"Donut small multiples" },
+  { kind:"chart", tabId:"trends", containerId:"chartPartTrends", filename:"part_trend_decomposition", title:"Part Trend Decomposition", subtitle:"Per-part trend lines", chartType:"Trend lines" },
+  { kind:"table", tabId:"religion", containerId:"tblReligionCrosstab", filename:"religion_status_crosstab", title:"Religion x Status Cross-tabulation", subtitle:"Tabular summary" },
+  { kind:"table", tabId:"age", containerId:"tblAgeReligionAdj", filename:"age_religion_adjudication_table", title:"Age x Religion x Adjudication Rate", subtitle:"Tabular summary" },
+  { kind:"table", tabId:"custom", containerId:"tblCustomAnalytics", filename:"custom_analytics_table", title:"Custom Analytics Table", subtitle:"Tabular summary" },
+  { kind:"table", tabId:"booths", containerId:"tblBoothSummary", filename:"booths_summary_table", title:"All Booths Summary", subtitle:"Tabular summary" },
+  { kind:"table", tabId:"booths", containerId:"tblBoothVoterList", filename:"booth_voter_list_table", title:"Part Voter List", subtitle:"Tabular summary" },
+  { kind:"table", tabId:"voters", containerId:"tblVotersGlobal", filename:"voters_table", title:"Voters Table", subtitle:"Tabular summary" },
+  { kind:"table", tabId:"duplicates", containerId:"tblSameContentFiles", filename:"duplicate_files_table", title:"Same-content files", subtitle:"Tabular summary" },
+  { kind:"table", tabId:"duplicates", containerId:"tblDuplicateVoters", filename:"duplicate_voter_rows_table", title:"Duplicate voter rows", subtitle:"Tabular summary" },
+  { kind:"table", tabId:"review", containerId:"tblReviewQueue", filename:"review_queue_table", title:"Religion Review Queue", subtitle:"Tabular summary" },
+  { kind:"page", tabId:"overview", containerId:"tabContentRoot", filename:"page_overview", title:"Overview Page", subtitle:"Full page snapshot" },
+  { kind:"page", tabId:"religion", containerId:"tabContentRoot", filename:"page_religion", title:"Religion Page", subtitle:"Full page snapshot" },
+  { kind:"page", tabId:"age", containerId:"tabContentRoot", filename:"page_age", title:"Age Cohorts Page", subtitle:"Full page snapshot" },
+  { kind:"page", tabId:"custom", containerId:"tabContentRoot", filename:"page_custom", title:"Custom Analytics Page", subtitle:"Full page snapshot" },
+  { kind:"page", tabId:"trends", containerId:"tabContentRoot", filename:"page_trends", title:"Trends Page", subtitle:"Full page snapshot" },
+  { kind:"page", tabId:"booths", containerId:"tabContentRoot", filename:"page_booths", title:"Booths Page", subtitle:"Full page snapshot" },
+  { kind:"page", tabId:"duplicates", containerId:"tabContentRoot", filename:"page_duplicates", title:"Duplicates Page", subtitle:"Full page snapshot" },
+  { kind:"page", tabId:"voters", containerId:"tabContentRoot", filename:"page_voters", title:"Voters Page", subtitle:"Full page snapshot" },
+  { kind:"page", tabId:"review", containerId:"tabContentRoot", filename:"page_review", title:"Review Page", subtitle:"Full page snapshot" },
+  { kind:"page", tabId:"tokens", containerId:"tabContentRoot", filename:"page_tokens", title:"Tokens Page", subtitle:"Full page snapshot" },
+  { kind:"page", tabId:"methodology", containerId:"tabContentRoot", filename:"page_methodology", title:"Methodology Page", subtitle:"Full page snapshot" },
+];
+
 // Export recharts chart graphic (png/svg) and csv (via rows)
 async function exportChartGraphic({
   containerId,
@@ -239,44 +317,95 @@ async function exportChartGraphic({
   height=800,
   scale=2,
   background="#ffffff",
+  title="",
+  subtitle="",
+  note="",
+  includeTimestamp=false,
 }){
   const el=document.getElementById(containerId);
   if(!el) throw new Error(`Chart container not found: ${containerId}`);
-  const svg=el.querySelector("svg");
-  if(!svg) throw new Error("SVG not found in chart container");
-  const xml=new XMLSerializer().serializeToString(svg);
   const safeName=(String(filename||"chart").replace(/[<>:"/\\|?*\x00-\x1F]/g," ").trim()||"chart");
+  const bg=normalizeHexColor(background,"#ffffff");
+  const rect=el.getBoundingClientRect();
+  const measuredW=Math.max(420,Math.round(rect.width||width||1200));
+  const measuredH=Math.max(220,Math.round(rect.height||height||500));
+  const targetW=Math.max(420,Math.round(width||measuredW));
+  const headerHeight=(title||subtitle||note||includeTimestamp)?110:0;
+  const ts=includeTimestamp?`Generated: ${new Date().toLocaleString()}`:"";
+  const targetH=Math.max(240,Math.round(height||(measuredH+headerHeight)));
+  const chartHeight=Math.max(220,targetH-headerHeight);
+  const textPrimary=isDarkHexColor(bg)?"#e2e8f0":"#0f172a";
+  const textSecondary=isDarkHexColor(bg)?"#94a3b8":"#334155";
+  const textMuted=isDarkHexColor(bg)?"#64748b":"#64748b";
+
+  // Ensure latest chart frame and fonts are ready before capture.
+  await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+  if(document?.fonts?.ready){ try{ await document.fonts.ready; }catch{} }
+
   if(format==="svg"){
-    const blob=new Blob([xml],{type:"image/svg+xml;charset=utf-8"});
+    const dataUrl=await toSvg(el,{
+      cacheBust:true,
+      backgroundColor:bg,
+      width:measuredW,
+      height:measuredH,
+      pixelRatio:1,
+    });
     const a=document.createElement("a");
     a.download=`${safeName}.svg`;
-    a.href=URL.createObjectURL(blob);
+    a.href=dataUrl;
     a.click();
-    URL.revokeObjectURL(a.href);
     return;
   }
+
+  const chartPng=await toPng(el,{
+    cacheBust:true,
+    backgroundColor:bg,
+    width:measuredW,
+    height:measuredH,
+    canvasWidth:Math.max(1,Math.round(measuredW*scale)),
+    canvasHeight:Math.max(1,Math.round(measuredH*scale)),
+    pixelRatio:1,
+  });
+
+  // Compose final export with optional professional header block.
   const canvas=document.createElement("canvas");
+  canvas.width=Math.max(1,Math.round(targetW*scale));
+  canvas.height=Math.max(1,Math.round(targetH*scale));
+  const ctx=canvas.getContext("2d");
+  if(!ctx) throw new Error("Canvas context unavailable");
+  ctx.fillStyle=bg;
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+
   const img=new Image();
-  const url="data:image/svg+xml;base64,"+btoa(unescape(encodeURIComponent(xml)));
   await new Promise((resolve,reject)=>{
     img.onload=resolve;
     img.onerror=reject;
-    img.src=url;
+    img.src=chartPng;
   });
-  canvas.width=Math.max(1,Math.round(width*scale));
-  canvas.height=Math.max(1,Math.round(height*scale));
-  const ctx=canvas.getContext("2d");
-  if(!ctx) throw new Error("Canvas context unavailable");
-  ctx.fillStyle=normalizeHexColor(background,"#ffffff");
-  ctx.fillRect(0,0,canvas.width,canvas.height);
-  const svgW=img.width||svg.viewBox?.baseVal?.width||width;
-  const svgH=img.height||svg.viewBox?.baseVal?.height||height;
-  const fit=Math.min(canvas.width/svgW,canvas.height/svgH);
-  const drawW=svgW*fit;
-  const drawH=svgH*fit;
-  const dx=(canvas.width-drawW)/2;
-  const dy=(canvas.height-drawH)/2;
+
+  const hdrPx=Math.round(headerHeight*scale);
+  if(headerHeight>0){
+    ctx.fillStyle=textPrimary;
+    ctx.font=`${Math.round(22*scale/2)}px Inter, Segoe UI, sans-serif`;
+    if(title) ctx.fillText(String(title),Math.round(18*scale),Math.round(28*scale));
+    ctx.fillStyle=textSecondary;
+    ctx.font=`${Math.round(13*scale/2)}px Inter, Segoe UI, sans-serif`;
+    if(subtitle) ctx.fillText(String(subtitle),Math.round(18*scale),Math.round(48*scale));
+    if(note||ts){
+      ctx.fillStyle=textMuted;
+      ctx.font=`${Math.round(11*scale/2)}px Inter, Segoe UI, sans-serif`;
+      ctx.fillText([note,ts].filter(Boolean).join(" | "),Math.round(18*scale),Math.round(66*scale));
+    }
+  }
+  const availW=canvas.width;
+  const availH=Math.max(1,canvas.height-hdrPx);
+  const fit=Math.min(availW/Math.max(1,img.width),availH/Math.max(1,img.height));
+  const drawW=Math.max(1,Math.round(img.width*fit));
+  const drawH=Math.max(1,Math.round(img.height*fit));
+  const dx=Math.round((availW-drawW)/2);
+  const dy=hdrPx+Math.round((availH-drawH)/2);
   ctx.drawImage(img,dx,dy,drawW,drawH);
+
   const a=document.createElement("a");
   a.download=`${safeName}.png`;
   a.href=canvas.toDataURL("image/png");
@@ -301,6 +430,20 @@ function exportRowsCsv(rows, filename="chart_data"){
 function exportChartPng(containerId, filename="chart.png"){
   const base=String(filename||"chart").replace(/\.png$/i,"");
   exportChartGraphic({containerId,filename:base,format:"png"}).catch(e=>window.alert(`Chart export failed: ${e?.message||"unknown error"}`));
+}
+
+function exportTableImage(containerId, filename="table_export", meta={}){
+  return exportChartGraphic({
+    containerId,
+    filename,
+    format:"png",
+    scale:2,
+    background:normalizeHexColor(meta.background||"#ffffff","#ffffff"),
+    title:meta.title||"Table Export",
+    subtitle:meta.subtitle||"",
+    note:meta.note||"Table capture",
+    includeTimestamp:meta.includeTimestamp!==false,
+  });
 }
 
 // Custom bar label rendered inside/top of bars
@@ -344,11 +487,13 @@ const TT={contentStyle:{background:C.bg,border:`1px solid ${C.border}`,borderRad
 // ── Status badge ─────────────────────────────────────────────────────────────
 const StatusBadge=({s})=>{
   const cfg={
-    "Under Adjudication":{c:C.adj, bg:C.adj+"22", label:"UA"},
-    "Deleted":{c:C.del, bg:C.del+"22", label:"DEL"},
-    "Active":{c:"#60a5fa", bg:"#3b82f622", label:"OK"},
+    "Under Adjudication":{c:C.adj, bg:C.adj+"30", label:"UA"},
+    "Deleted":{c:C.del, bg:C.del+"30", label:"DEL"},
+    "Active":{c:C.active, bg:C.active+"22", label:"OK"},
   }[s]||{c:C.dim, bg:"#ffffff11", label:s};
-  return <Tag c={cfg.label} color={cfg.c} bg={cfg.bg}/>;
+  return <span style={{display:"inline-flex",alignItems:"center",gap:4,padding:"2px 8px",
+    borderRadius:6,border:`1px solid ${cfg.c}55`,background:cfg.bg,color:cfg.c,
+    fontSize:10,fontWeight:800,fontFamily:MONO,letterSpacing:0.2}}>{cfg.label}</span>;
 };
 
 // ── Religion badge ────────────────────────────────────────────────────────────
@@ -421,6 +566,9 @@ function exportFullDataset(voters) {
 
 function toExportRow(v){
   return {
+    "AC No": v.ac_no||"",
+    "AC Name": v.ac_name||"",
+    "Part Number": v.part_no,
     "Part No": v.part_no, "Serial No": v.serial_no, "Voter ID": v.voter_id,
     "Name": v.name, "Relation Type": v.relation_type||"", "Relation Name": v.relation_name||"",
     "Age": v.age, "Gender": v.gender, "House No": v.house_no||"",
@@ -438,12 +586,16 @@ function buildSummaryRows(voters){
   const parts=[...new Set(voters.map(v=>v.part_no))].sort((a,b)=>+a-+b);
   return parts.map(pt=>{
     const pv=voters.filter(v=>v.part_no===pt);
+    const sample=pv[0]||{};
     const getRel=v=>v.override||v.religion;
     const m=pv.filter(v=>getRel(v)==="Muslim");
     const h=pv.filter(v=>getRel(v)==="Hindu");
     const adj=pv.filter(v=>v.status==="Under Adjudication");
     const del=pv.filter(v=>v.status==="Deleted");
     return {
+      "AC No": sample.ac_no||"",
+      "AC Name": sample.ac_name||"",
+      "Part Number":pt,
       "Part":pt, "Total":pv.length,
       "Active":pv.filter(v=>v.status==="Active").length,
       "Under Adjudication":adj.length, "Adj%":pct(adj.length,pv.length),
@@ -548,12 +700,19 @@ function FilterBar({gSearch,setGSearch,gPart,setGPart,gStatus,setGStatus,
 }
 
 // ══ UPLOAD SCREEN ════════════════════════════════════════════════════════════
-function UploadScreen({onFiles,loading}){
+function UploadScreen({onFiles,loading,theme,setTheme}){
   const ref=useRef();
   return(
     <div style={{minHeight:"100vh",background:C.bg,color:C.text,fontFamily:FONT,
       display:"flex",alignItems:"center",justifyContent:"center"}}>
-      <div style={{maxWidth:700,width:"100%",padding:"0 24px"}}>
+      <div style={{maxWidth:700,width:"100%",padding:"0 24px",position:"relative"}}>
+        <div style={{position:"absolute",right:24,top:-54}}>
+          <button onClick={()=>setTheme(t=>t==="dark"?"light":"dark")}
+            style={{padding:"6px 12px",background:C.panel,border:`1px solid ${C.border}`,
+              borderRadius:7,color:C.muted,fontSize:12,cursor:"pointer",fontFamily:FONT}}>
+            {theme==="dark"?"☀ Light":"🌙 Dark"}
+          </button>
+        </div>
         <div style={{textAlign:"center",marginBottom:36}}>
           <div style={{fontSize:10,letterSpacing:5,color:C.dim,marginBottom:10,
             textTransform:"uppercase",fontFamily:MONO}}>Electoral Integrity Monitor · v1.0</div>
@@ -577,7 +736,7 @@ function UploadScreen({onFiles,loading}){
           <p style={{fontSize:12,color:C.dim}}>Multiple .xlsx files · All parts of any AC · Supports 300+ booths</p>
           <p style={{fontSize:11,color:C.dim,marginTop:6}}>🔒 Fully local — no data sent to any server</p>
           <input ref={ref} type="file" accept=".xlsx" multiple style={{display:"none"}}
-            onChange={e=>onFiles(Array.from(e.target.files))}/>
+            onChange={e=>{ onFiles(Array.from(e.target.files||[])); e.target.value=""; }}/>
         </div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:10,marginTop:24}}>
           {[
@@ -586,7 +745,7 @@ function UploadScreen({onFiles,loading}){
             ["🧾 Duplicate Detection", "Row-level duplicates · same-content file hash detection"],
             ["📦 Reporting", "One-click export pack (XLSX + charts + printable report)"],
           ].map(([t,d])=>(
-            <div key={t} style={{padding:14,background:"#0d1526",borderRadius:8,border:`1px solid ${C.border}`}}>
+            <div key={t} style={{padding:14,background:C.panel,borderRadius:8,border:`1px solid ${C.border}`}}>
               <div style={{fontWeight:700,color:C.text,marginBottom:4,fontSize:13}}>{t}</div>
               <div style={{color:C.dim,fontSize:11,lineHeight:1.6}}>{d}</div>
             </div>
@@ -632,12 +791,23 @@ export default function App(){
   const [caGroupBy,setCaGroupBy]=useState("part_no");
   const [caMetric,setCaMetric]=useState("adj_rate");
   const [caCompare,setCaCompare]=useState("all");
+  const [caMode,setCaMode]=useState("grouped");
+  const [caStackBy,setCaStackBy]=useState("status");
+  const [partVizMode,setPartVizMode]=useState("count"); // count | share
+  const [partVizHeight,setPartVizHeight]=useState(240);
+  const [partVizSyncY,setPartVizSyncY]=useState(true);
+  const [donutPage,setDonutPage]=useState(0);
+  const [donutPerPage,setDonutPerPage]=useState(8);
+  const [partTripleDim,setPartTripleDim]=useState("religion"); // religion | age
+  const [partTripleMode,setPartTripleMode]=useState("absolute"); // absolute | share
+  const [partTripleHeight,setPartTripleHeight]=useState(220);
 
   // Voter list state
   const [vPage,setVPage]=useState(0);
   const [vSort,setVSort]=useState("serial_no");
   const [vSortD,setVSortD]=useState("asc");
   const [editingId,setEditingId]=useState(null);
+  const [voterEditModal,setVoterEditModal]=useState(null); // {uid,draft}
 
   // Booth tab state
   const [boothPart,setBoothPart]=useState(null);
@@ -665,6 +835,19 @@ export default function App(){
   const [aiLoading,setAiLoading]=useState(false);
   const [aiBrief,setAiBrief]=useState("");
   const [chartExportModal,setChartExportModal]=useState(null);
+  const [chartStudioOpen,setChartStudioOpen]=useState(false);
+  const [chartPrefs,setChartPrefs]=useState({
+    showLegend:true,
+    showValueLabels:true,
+    valueLabelPos:"top", // top|inside|right
+    xAxisLabel:"",
+    yAxisLabel:"",
+    activeColor:"#3b82f6",
+    underAdjColor:"#ef4444",
+    deletedColor:"#be123c",
+    muslimColor:"#10b981",
+    hinduColor:"#f87171",
+  });
 
   // ── File registry: tracks which filenames are loaded (for replace/cancel dialog) ──
   const [loadedFiles,setLoadedFiles]=useState(()=>{
@@ -676,6 +859,7 @@ export default function App(){
   const [replaceModal,setReplaceModal]=useState(null); // {files:[File,...]} pending replace prompt
   const [colMapModal,setColMapModal]=useState(null); // {file, actualCols, mapping, missing, resolve}
   const [tokenLearnCount,setTokenLearnCount]=useState(0); // tokens auto-learned from review actions
+  const jointReclassDoneRef=useRef(false);
 
   // Effective token scores (base + user overrides); -1 sentinel = deleted/suppressed
   const effectiveScores=useMemo(()=>{
@@ -694,6 +878,18 @@ export default function App(){
       return {...v,religion:rel,relConf:conf,relVia:via};
     }));
   },[effectiveScores]); // eslint-disable-line
+
+  // One-time reclassification pass so stored voters also use enforced joint name+relation logic.
+  useEffect(()=>{
+    if(jointReclassDoneRef.current) return;
+    if(!voters.length) return;
+    setVoters(prev=>prev.map(v=>{
+      if(v._manualRel) return v;
+      const {rel,conf,via}=classifyReligion(v.name,v.relation_name,effectiveScores);
+      return {...v,religion:rel,relConf:conf,relVia:via};
+    }));
+    jointReclassDoneRef.current=true;
+  },[voters.length,effectiveScores]);
 
   // ── LocalStorage: restore on mount ──────────────────────────────────────────
   useEffect(()=>{
@@ -736,11 +932,13 @@ export default function App(){
 
   const fileRef=useRef();
   const tokenFileRef=useRef();
+  const sessionFileRef=useRef();
   const PAGE_SIZE=50;
 
+  // Apply active theme palette during render for immediate UI repaint on toggle.
+  Object.assign(C,theme==="light"?THEME_LIGHT:THEME_DARK);
+
   useEffect(()=>{
-    const palette=theme==="light"?LIGHT_THEME:DARK_THEME;
-    Object.assign(C,palette);
     try{ localStorage.setItem("eim_theme",theme); }catch{}
     if(typeof document!=="undefined"){
       document.body.style.background=C.bg;
@@ -830,15 +1028,23 @@ export default function App(){
     gender:         ["gender","sex","m/f","voter_gender","voter gender"],
     stamp_type:     ["stamp_type","stamp type","stamp","status","voter_status","voter status","deletion_status","deletion status","flag","type","adjudication","deleted_flag"],
   };
-  const OPTIONAL_COLS=["ac_no","ac_name","house_no","page_no","relation_type"];
+  const OPTIONAL_ALIASES={
+    ac_no:         ["ac_no","ac no","ac number","assembly constituency no","assembly constituency number","constituency no","constituency number"],
+    ac_name:       ["ac_name","ac name","assembly constituency name","constituency name"],
+    house_no:      ["house_no","house no","house number","house_number"],
+    page_no:       ["page_no","page no","page number","page_number"],
+    relation_type: ["relation_type","relation type","relation","father/husband type"],
+  };
+  const OPTIONAL_COLS=Object.keys(OPTIONAL_ALIASES);
+  const ALL_COL_ALIASES={...COLUMN_ALIASES,...OPTIONAL_ALIASES};
 
   // Build a remapping from actual columns → canonical names using aliases
   const buildColMap=(actualCols)=>{
     const map={}; // canonical → actual col key (original case)
     const usedActual=new Set();
-    const required=Object.keys(COLUMN_ALIASES);
-    for(const canonical of required){
-      const aliases=COLUMN_ALIASES[canonical];
+    const allCanonicals=Object.keys(ALL_COL_ALIASES);
+    for(const canonical of allCanonicals){
+      const aliases=ALL_COL_ALIASES[canonical];
       for(const actual of actualCols){
         const lc=actual.toLowerCase().trim();
         if(aliases.includes(lc) && !usedActual.has(actual)){
@@ -902,12 +1108,17 @@ export default function App(){
           continue;
         }
         const wb=XLSX.read(buf,{type:"array"});
-        if(!wb.Sheets["Voter Roll"]){
+        const preferred=wb.Sheets["Voter Roll"]?"Voter Roll":(wb.SheetNames?.[0]||null);
+        if(!preferred){
           newWarnings.push({file:file.name,type:"error",
-            msg:`Missing "Voter Roll" sheet. Found sheets: ${wb.SheetNames.join(", ")}`});
+            msg:`No readable sheet found in workbook`});
           continue;
         }
-        const ws=wb.Sheets["Voter Roll"];
+        if(preferred!=="Voter Roll"){
+          newWarnings.push({file:file.name,type:"warn",
+            msg:`"Voter Roll" sheet not found; using first sheet "${preferred}"`});
+        }
+        const ws=wb.Sheets[preferred];
         const rows=XLSX.utils.sheet_to_json(ws,{defval:""});
         if(!rows.length){
           newWarnings.push({file:file.name,type:"error",msg:"Sheet is empty"});
@@ -1051,11 +1262,16 @@ export default function App(){
         all.forEach(v=>{
           const key=String(v.part_no??"?");
           if(!partMap[key]) partMap[key]={
+            acNo:"",acName:"",
             part:key,total:0,active:0,adj:0,del:0,
             muslim:0,hindu:0,uncertain:0,unknown:0,duplicates:0,
             below45:0,age45Plus:0,review:0,
           };
           const p=partMap[key];
+          const rowAcNo=String(v.ac_no||"").trim();
+          const rowAcName=String(v.ac_name||"").trim();
+          if(!p.acNo&&rowAcNo) p.acNo=rowAcNo;
+          if(!p.acName&&rowAcName) p.acName=rowAcName;
           p.total+=1;
           if(v.status==="Under Adjudication") p.adj+=1;
           else if(v.status==="Deleted") p.del+=1;
@@ -1070,8 +1286,12 @@ export default function App(){
         });
         const partRows=Object.values(partMap).sort((a,b)=>(+a.part||0)-(+b.part||0));
         const totalReview=partRows.reduce((s,r)=>s+r.review,0);
+        const acCoverage=[...new Set(
+          partRows.map(r=>`${r.acNo||"?"} - ${r.acName||"?"}`)
+        )].join(" ; ");
         setUploadSummary({
           files:files.length,loaded:all.length,parts:partRows.length,
+          acCoverage,
           unknown:partRows.reduce((s,r)=>s+r.unknown,0),
           uncertain:partRows.reduce((s,r)=>s+r.uncertain,0),
           review:totalReview,
@@ -1082,25 +1302,124 @@ export default function App(){
           isReplace:replaceNames.size>0,
         });
       }
+      if(!all.length && !baseVoters.length){
+        const errs=newWarnings.filter(w=>w.type==="error").slice(0,3).map(w=>`• ${w.file}: ${w.msg}`);
+        const warns=newWarnings.filter(w=>w.type==="warn").slice(0,2).map(w=>`• ${w.file}: ${w.msg}`);
+        const msg=[
+          "No voter rows were loaded from the selected file(s).",
+          errs.length?`Errors:\n${errs.join("\n")}`:"",
+          warns.length?`Warnings:\n${warns.join("\n")}`:"",
+          "Check column mapping and sheet contents, then try again.",
+        ].filter(Boolean).join("\n\n");
+        window.alert(msg);
+      }
       const allMergedParts=[...new Set(merged.map(v=>v.part_no))].sort((a,b)=>+a-+b);
       if(allMergedParts.length&&boothPart===null) setBoothPart(allMergedParts[0]);
     }catch(e){
       setFileWarnings(prev=>[...prev,{file:"unknown",type:"error",msg:e.message}]);
+      window.alert(`Upload failed: ${e?.message||"unknown error"}`);
     }
     setLoading(false);
   },[boothPart,voters,effectiveScores,loadedFileMeta]);
 
   // ── Public loadFiles: checks registry first, shows replace/cancel if needed ──
   const loadFiles=useCallback(async(files)=>{
-    const alreadyLoaded=files.filter(f=>f.name in loadedFiles);
-    const newFiles=files.filter(f=>!(f.name in loadedFiles));
-    if(alreadyLoaded.length>0){
-      // Show replace/cancel modal for the conflicting files
-      setReplaceModal({conflicting:alreadyLoaded, newOnly:newFiles, all:files});
-    } else {
-      await doLoadFiles(files);
+    if(!Array.isArray(files) || !files.length) return;
+    const xlsxFiles=files.filter(f=>String(f?.name||"").toLowerCase().endsWith(".xlsx"));
+    if(!xlsxFiles.length){
+      window.alert("Please select one or more .xlsx files.");
+      return;
     }
-  },[loadedFiles,doLoadFiles]);
+    const byName=xlsxFiles.filter(f=>f.name in loadedFiles);
+    const byContent=[];
+    const seenRaw=new Map();
+    const existingRawToName=new Map(
+      Object.entries(loadedFileMeta||{})
+        .map(([name,m])=>[m?.rawHash,name])
+        .filter(([h])=>!!h)
+    );
+    for(const f of xlsxFiles){
+      if(byName.some(x=>x.name===f.name)) continue;
+      const buf=await f.arrayBuffer();
+      const raw=await sha256HexArrayBuffer(buf);
+      if(seenRaw.has(raw)) continue;
+      seenRaw.set(raw,f.name);
+      if(existingRawToName.has(raw)){
+        byContent.push({ file:f, existingName:existingRawToName.get(raw), rawHash:raw });
+      }
+    }
+    const conflictNewNames=new Set([
+      ...byName.map(f=>f.name),
+      ...byContent.map(x=>x.file.name),
+    ]);
+    const newOnly=xlsxFiles.filter(f=>!conflictNewNames.has(f.name));
+    if(byName.length>0 || byContent.length>0){
+      setReplaceModal({ conflicting:byName, contentConflicts:byContent, newOnly, all:xlsxFiles });
+      return;
+    }
+    await doLoadFiles(xlsxFiles);
+  },[loadedFiles,loadedFileMeta,doLoadFiles]);
+
+  const openVoterEditor=useCallback((v)=>{
+    setVoterEditModal({
+      uid:v._uid,
+      draft:{
+        name:String(v.name||""),
+        relation_name:String(v.relation_name||""),
+        age:String(v.age??""),
+        gender:String(v.gender||""),
+        voter_id:String(v.voter_id||""),
+        serial_no:String(v.serial_no||""),
+        house_no:String(v.house_no||""),
+        page_no:String(v.page_no||""),
+        status:String(v.status||canonicalStatusFromStamp(v.stamp_type)),
+        religion_override:String(overrides[v._uid]||""),
+      },
+    });
+  },[overrides]);
+
+  const saveVoterEdit=useCallback(()=>{
+    if(!voterEditModal?.uid) return;
+    const uid=voterEditModal.uid;
+    const d=voterEditModal.draft||{};
+    setVoters(prev=>prev.map(v=>{
+      if(v._uid!==uid) return v;
+      const name=String(d.name||"").trim();
+      const relation=String(d.relation_name||"").trim();
+      const status=["Active","Under Adjudication","Deleted"].includes(d.status)?d.status:"Active";
+      const stamp=canonicalStampFromStatus(status);
+      const {rel,conf,via}=classifyReligion(name,relation,effectiveScores);
+      const manualRel=["Muslim","Hindu","Uncertain","Unknown"].includes(d.religion_override)?d.religion_override:"";
+      return {
+        ...v,
+        name,
+        relation_name:relation,
+        age:String(d.age??""),
+        gender:String(d.gender||""),
+        voter_id:String(d.voter_id||""),
+        serial_no:String(d.serial_no||""),
+        house_no:String(d.house_no||""),
+        page_no:String(d.page_no||""),
+        stamp_type:stamp,
+        status,
+        religion:manualRel||rel,
+        relConf:conf,
+        relVia:manualRel?"manual-edit":via,
+        _manualRel:!!manualRel,
+        ageGroup:getAgeGroup(d.age),
+        isSelfMapped:isSelfMapped(d.age),
+        duplicateKey:duplicateKeyOf({part_no:v.part_no,voter_id:d.voter_id,serial_no:d.serial_no,name}),
+      };
+    }));
+    setOverrides(prev=>{
+      const n={...prev};
+      const mr=["Muslim","Hindu","Uncertain","Unknown"].includes(d.religion_override)?d.religion_override:"";
+      if(mr) n[uid]=mr;
+      else delete n[uid];
+      return n;
+    });
+    setVoterEditModal(null);
+  },[voterEditModal,effectiveScores]);
 
   // Effective religion (auto or override)
   const effRel=useCallback((v)=>overrides[v._uid]||v.religion,[overrides]);
@@ -1205,13 +1524,15 @@ export default function App(){
     filtered.forEach(v=>{
       if(!comparePass(v)) return;
       const k=groupVal(v);
-      if(!g[k]) g[k]={group:k,total:0,adj:0,del:0,active:0,m:0,h:0};
+      if(!g[k]) g[k]={group:k,total:0,adj:0,del:0,active:0,m:0,h:0,male:0,female:0};
       g[k].total++;
       if(v.status==="Under Adjudication") g[k].adj++;
       else if(v.status==="Deleted") g[k].del++;
       else g[k].active++;
       if(effRel(v)==="Muslim") g[k].m++;
       if(effRel(v)==="Hindu") g[k].h++;
+      if(String(v.gender||"").toUpperCase().startsWith("M")) g[k].male++;
+      if(String(v.gender||"").toUpperCase().startsWith("F")) g[k].female++;
     });
     const rows=Object.values(g).map(r=>({
       ...r,
@@ -1294,7 +1615,193 @@ export default function App(){
     return rows;
   },[filtered,stats,needsReview,voters,duplicateGroups,fileDuplicateGroups]);
 
-  const exportReportPack=useCallback(()=>{
+  const reindexImportedVoters=useCallback((rows)=>{
+    return (rows||[]).map(v=>{
+      const name=String(v.name||"").trim();
+      const relation=String(v.relation_name||"").trim();
+      const status=v.status||canonicalStatusFromStamp(v.stamp_type);
+      const stamp_type=canonicalStampFromStatus(status);
+      const manualRel=v._manualRel?String(v.religion||""):"";
+      const inferred=classifyReligion(name,relation,effectiveScores);
+      const finalRel=manualRel||v.religion||inferred.rel;
+      return {
+        ...v,
+        name,
+        relation_name:relation,
+        status,
+        stamp_type,
+        ageGroup:getAgeGroup(v.age),
+        isSelfMapped:isSelfMapped(v.age),
+        duplicateKey:duplicateKeyOf({part_no:v.part_no,voter_id:v.voter_id,serial_no:v.serial_no,name}),
+        religion:finalRel,
+        relConf:v.relConf??inferred.conf,
+        relVia:manualRel?"manual-restore":(v.relVia||inferred.via),
+        _manualRel:!!manualRel,
+      };
+    });
+  },[effectiveScores]);
+
+  const exportSessionPack=useCallback(()=>{
+    if(!voters.length){
+      window.alert("Load voter data first.");
+      return;
+    }
+    const nowIso=new Date().toISOString();
+    const compactVoters=voters.map(v=>({
+      _uid:v._uid,
+      ac_no:v.ac_no||"",
+      ac_name:v.ac_name||"",
+      part_no:v.part_no||"",
+      serial_no:v.serial_no||"",
+      voter_id:v.voter_id||"",
+      name:v.name||"",
+      relation_name:v.relation_name||"",
+      relation_type:v.relation_type||"",
+      house_no:v.house_no||"",
+      page_no:v.page_no||"",
+      age:v.age??"",
+      gender:v.gender||"",
+      stamp_type:v.stamp_type||"",
+      sourceFile:v.sourceFile||"",
+      religion:v.religion||"Unknown",
+      _manualRel:!!v._manualRel,
+    }));
+    const payload={
+      schemaVersion:"eimpack.v1",
+      createdAt:nowIso,
+      appVersion:"1.0",
+      sessionMode:"compact",
+      summary:{
+        totalVoters:compactVoters.length,
+        parts:[...new Set(compactVoters.map(v=>v.part_no))].length,
+        acCoverage:[...new Set(compactVoters.map(v=>`${v.ac_no||"?"}-${v.ac_name||"?"}`))],
+      },
+      voters:compactVoters,
+      overrides,
+      tokenOverrides,
+      loadedFiles,
+      loadedFileMeta,
+      chartPrefs,
+      ui:{
+        theme,
+        filters:{gPart,gStatus,gRel,gAge,gGender,gSearch},
+        tab,
+      },
+    };
+    const safeDate=nowIso.slice(0,10);
+    const baseName=sanitizeFileName(`Session_${safeDate}`);
+    const payloadText=JSON.stringify(payload); // minified to reduce session size
+    const blob=new Blob([payloadText],{type:"application/json;charset=utf-8"});
+    const a=document.createElement("a");
+    a.download=`${baseName}.eimpack`;
+    a.href=URL.createObjectURL(blob);
+    a.click();
+    URL.revokeObjectURL(a.href);
+    const approxMb=(blob.size/(1024*1024)).toFixed(2);
+
+    // Companion XLSX for human-readable transfer.
+    const wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet([{
+      schemaVersion:payload.schemaVersion,
+      createdAt:payload.createdAt,
+      appVersion:payload.appVersion,
+      totalVoters:payload.summary.totalVoters,
+      totalParts:payload.summary.parts,
+      theme:payload.ui.theme,
+      acCoverage:payload.summary.acCoverage.join("; "),
+      sessionSizeMB:approxMb,
+    }]),"Session_Metadata");
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(voters.map(v=>toExportRow({...v,override:overrides[v._uid]||null}))),"Session_Voters");
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(Object.entries(overrides).map(([uid,rel])=>({uid,religion:rel}))),"Overrides");
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(Object.entries(tokenOverrides).map(([token,score])=>({token,score}))),"Token_Overrides");
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(Object.values(loadedFileMeta||{}).map(m=>({
+      fileName:m.fileName||"", rawHash:m.rawHash||"", semanticHash:m.semanticHash||"", rowCount:m.rowCount||"",
+      acNo:m.acNo||"", acName:m.acName||"", importedAt:m.importedAt||"",
+    }))),"Loaded_Files");
+    XLSX.writeFile(wb,`${baseName}.xlsx`,{compression:true});
+    if(+approxMb>8){
+      window.alert(`Session exported (${approxMb} MB). Tip: use fewer loaded rolls or clear older files before export for smaller packs.`);
+    }
+  },[voters,overrides,tokenOverrides,loadedFiles,loadedFileMeta,chartPrefs,theme,gPart,gStatus,gRel,gAge,gGender,gSearch,tab]);
+
+  const handleImportSessionFile=useCallback(async(file)=>{
+    if(!file) return;
+    try{
+      let payload=null;
+      const lower=String(file.name||"").toLowerCase();
+      if(lower.endsWith(".xlsx")){
+        const buf=await file.arrayBuffer();
+        const wb=XLSX.read(buf,{type:"array"});
+        const wsMeta=wb.Sheets["Session_Metadata"];
+        const wsVoters=wb.Sheets["Session_Voters"];
+        if(!wsVoters) throw new Error("Session_Voters sheet missing.");
+        const metaRows=wsMeta?XLSX.utils.sheet_to_json(wsMeta,{defval:""}):[];
+        const voterRows=XLSX.utils.sheet_to_json(wsVoters,{defval:""});
+        payload={
+          schemaVersion:(metaRows[0]?.schemaVersion||"eimpack.v1"),
+          createdAt:metaRows[0]?.createdAt||new Date().toISOString(),
+          appVersion:metaRows[0]?.appVersion||"1.0",
+          voters:voterRows.map(r=>({
+            ac_no:r["AC No"]||r.ac_no||"",
+            ac_name:r["AC Name"]||r.ac_name||"",
+            part_no:String(r["Part Number"]||r.part_no||r.Part||""),
+            serial_no:String(r["Serial No"]||r.serial_no||r.Serial||""),
+            voter_id:String(r["Voter ID"]||r.voter_id||""),
+            name:String(r.Name||r.name||""),
+            relation_name:String(r["Relation Name"]||r.relation_name||""),
+            age:String(r.Age??r.age??""),
+            gender:String(r.Gender||r.gender||""),
+            status:String(r.Status||r.status||"Active"),
+            stamp_type:canonicalStampFromStatus(String(r.Status||r.status||"Active")),
+            religion:String(r["Religion (Final)"]||r.religion||r["Religion (Auto)"]||"Unknown"),
+            relConf:r["Confidence %"]?Number(r["Confidence %"])/100:0,
+            relVia:String(r.Via||r.relVia||"import"),
+            _uid:String(r._uid||uid()),
+          })),
+          overrides:{},
+          tokenOverrides:{},
+          loadedFiles:{},
+          loadedFileMeta:{},
+          chartPrefs:{},
+          ui:{},
+        };
+      }else{
+        const txt=await file.text();
+        payload=JSON.parse(txt);
+      }
+
+      if(!payload || payload.schemaVersion!=="eimpack.v1") throw new Error("Unsupported or invalid session schema.");
+      const incomingVoters=Array.isArray(payload.voters)?payload.voters:[];
+      const summary=`Records: ${incomingVoters.length.toLocaleString()} | Parts: ${new Set(incomingVoters.map(v=>v.part_no)).size} | Overrides: ${Object.keys(payload.overrides||{}).length}`;
+      const mode=window.confirm(`Import session summary\n${summary}\n\nOK = Replace current session\nCancel = Merge into current session`)?"replace":"merge";
+      const indexedIncoming=reindexImportedVoters(incomingVoters.map(v=>({
+        ...v,
+        _uid:v._uid||uid(),
+      })));
+
+      if(mode==="replace"){
+        setVoters(indexedIncoming);
+        setOverrides(payload.overrides||{});
+        setTokenOverrides(payload.tokenOverrides||{});
+        setLoadedFiles(payload.loadedFiles||{});
+        setLoadedFileMeta(payload.loadedFileMeta||{});
+        if(payload.chartPrefs) setChartPrefs(prev=>({...prev,...payload.chartPrefs}));
+        if(payload.ui?.theme==="dark"||payload.ui?.theme==="light") setTheme(payload.ui.theme);
+      }else{
+        setVoters(prev=>reindexImportedVoters([...prev,...indexedIncoming]));
+        setOverrides(prev=>({...prev,...(payload.overrides||{})}));
+        setTokenOverrides(prev=>({...prev,...(payload.tokenOverrides||{})}));
+        setLoadedFiles(prev=>({...prev,...(payload.loadedFiles||{})}));
+        setLoadedFileMeta(prev=>({...prev,...(payload.loadedFileMeta||{})}));
+        if(payload.chartPrefs) setChartPrefs(prev=>({...prev,...payload.chartPrefs}));
+      }
+      window.alert("Session import complete.");
+    }catch(err){
+      window.alert(`Session import failed: ${err?.message||"unknown error"}`);
+    }
+  },[reindexImportedVoters]);
+
+  const exportReportPack=useCallback(async()=>{
     if(!voters.length){
       window.alert("Load voter data first.");
       return;
@@ -1302,8 +1809,21 @@ export default function App(){
     setReportBusy(true);
     try{
       const wb=XLSX.utils.book_new();
+      const votersFinal=voters.map(v=>({...v,override:overrides[v._uid]||null}));
+      const eff=(v)=>v.override||v.religion;
+      const acPairs=[...new Map(voters.map(v=>[
+        `${String(v.ac_no||"").trim()}|${String(v.ac_name||"").trim()}`,
+        { acNo:String(v.ac_no||"").trim(), acName:String(v.ac_name||"").trim() },
+      ])).values()].filter(x=>x.acNo||x.acName);
+      const acPrimary=acPairs[0]||{acNo:"",acName:""};
+      const acCoverage=acPairs.map(x=>`${x.acNo||"?"} - ${x.acName||"?"}`).join("; ");
+      const partCount=new Set(voters.map(v=>String(v.part_no||"").trim()).filter(Boolean)).size;
       const overview=[{
         "Generated At": new Date().toISOString(),
+        "AC No": acPrimary.acNo,
+        "AC Name": acPrimary.acName,
+        "Part Count": partCount,
+        "AC Coverage": acCoverage||"",
         "Total Voters": stats.total,
         "Active": stats.total-stats.adj-stats.del,
         "Under Adjudication": stats.adj,
@@ -1320,11 +1840,69 @@ export default function App(){
         "Duplicate File Groups": fileDuplicateGroups.length,
       }];
       XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(overview),"Overview");
-      XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(buildSummaryRows(voters.map(v=>({...v,override:overrides[v._uid]||null})))),"Part_Summary");
+      XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(buildSummaryRows(votersFinal)),"Part_Summary");
       XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(anomalyRows.length?anomalyRows:[{Severity:"Info",Category:"Anomaly",Metric:"No major anomaly triggered",Value:"-",Threshold:"-",Interpretation:"Review manually"}]),"Anomalies");
+
+      const relCats=["Muslim","Hindu","Uncertain","Unknown"];
+      const religionRows=relCats.map(r=>{
+        const rv=votersFinal.filter(v=>eff(v)===r);
+        const adj=rv.filter(v=>v.status==="Under Adjudication").length;
+        const del=rv.filter(v=>v.status==="Deleted").length;
+        return {
+          Religion:r,
+          Total:rv.length,
+          Active:rv.filter(v=>v.status==="Active").length,
+          "Under Adjudication":adj,
+          "Adj %":rv.length?`${(adj/rv.length*100).toFixed(2)}%`:"0.00%",
+          Deleted:del,
+          "Del %":rv.length?`${(del/rv.length*100).toFixed(2)}%`:"0.00%",
+        };
+      });
+      XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(religionRows),"Religion_Crosstab");
+
+      const ageBuckets=["18–22","23–30","31–39","40–44★","45–60","60+","Unknown"];
+      const ageRows=ageBuckets.map(ag=>{
+        const av=votersFinal.filter(v=>v.ageGroup===ag);
+        const a=av.filter(v=>v.status==="Under Adjudication").length;
+        const d=av.filter(v=>v.status==="Deleted").length;
+        return {
+          "Age Group":ag,
+          Total:av.length,
+          Active:av.filter(v=>v.status==="Active").length,
+          "Under Adjudication":a,
+          Deleted:d,
+          "Adj %":av.length?`${(a/av.length*100).toFixed(2)}%`:"0.00%",
+          "Del %":av.length?`${(d/av.length*100).toFixed(2)}%`:"0.00%",
+          "Self-mapped in bucket":av.filter(v=>v.isSelfMapped).length,
+        };
+      });
+      XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(ageRows),"Age_Cohorts");
+
+      XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(partTrendRows.map(r=>({
+        Part:r.part, Total:r.total,
+        "Muslim Adj %":r.mRate, "Hindu Adj %":r.hRate,
+        "Risk Diff %":r.diffPct, "Risk Diff CI":r.diffCI,
+        RR:r.rr??"", OR:r.or??"", "Chi2":r.chi2??"", p:r.p??"", q:r.q??"",
+        "FDR Sig":r.fdrSig?"Yes":"No",
+      }))),"Part_Trends");
+
+      XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(customAnalyticsRows.map(r=>({
+        Group:r.group, Total:r.total, Active:r.active, "Under Adjudication":r.adj, Deleted:r.del,
+        "Adj Rate %":r.adj_rate, "Del Rate %":r.del_rate, "Muslim Share %":r.muslim_share, "Hindu Share %":r.hindu_share,
+      }))),"Custom_Analytics");
+
+      XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(needsReview.map(v=>({
+        "AC No":v.ac_no||"", "AC Name":v.ac_name||"", "Part Number":v.part_no, "Serial":v.serial_no, "Voter ID":v.voter_id,
+        Name:v.name, "Relation Name":v.relation_name, Age:v.age, Gender:v.gender, Status:v.status,
+        "Religion (Auto)":v.religion, "Confidence %":v.relConf?Math.round(v.relConf*100):"", "Via":v.relVia||"",
+      }))),"Review_Queue");
+
       const dupRows=duplicateGroups.flatMap(g=>g.rows.map(v=>({
         "Duplicate Group": g.key,
         "Group Size": g.count,
+        "AC No": v.ac_no||"",
+        "AC Name": v.ac_name||"",
+        "Part Number": v.part_no,
         "Part": v.part_no,
         "Voter ID": v.voter_id,
         "Serial": v.serial_no,
@@ -1345,16 +1923,92 @@ export default function App(){
         "Imported At":r.importedAt||"",
       })));
       XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(dupFiles.length?dupFiles:[{"Content Hash":"None","Group Size":0}]),"File_Duplicates");
-      XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(voters.map(v=>toExportRow({...v,override:overrides[v._uid]||null}))),"All_Voters");
-      XLSX.writeFile(wb,sanitizeFileName(`Publication_Report_${new Date().toISOString().slice(0,10)}.xlsx`),{compression:true});
+      XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(votersFinal.map(v=>toExportRow(v))),"All_Voters");
 
-      const chartIds=[
-        ["chartAdjPie","adj_religion_pie.png"],
-        ["chartRelStatus","status_by_religion.png"],
-        ["chartDiverg","status_composition.png"],
-        ["chartAgeTrend","age_adj_trend.png"],
-      ];
-      chartIds.forEach(([id,file],idx)=>setTimeout(()=>exportChartPng(id,file),idx*300));
+      const chartCatalog=EXPORT_REGISTRY
+        .filter(x=>x.kind==="chart")
+        .map(x=>({
+          Tab:x.tabId, Container:x.containerId, Title:x.title||"", Subtitle:x.subtitle||"",
+          Type:x.chartType||"Chart", Legend:chartPrefs.showLegend?"On":"Off",
+          XAxis:chartPrefs.xAxisLabel||"", YAxis:chartPrefs.yAxisLabel||"",
+        }));
+      XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(chartCatalog),"Chart_Catalog");
+
+      const previousTab=tab;
+      const wait=ms=>new Promise(r=>setTimeout(r,ms));
+      const manifestRows=[];
+      const captures=EXPORT_REGISTRY.filter(x=>x.kind==="chart"||x.kind==="table");
+      const pages=EXPORT_REGISTRY.filter(x=>x.kind==="page");
+      for(const p of captures){
+        if(tab!==p.tabId){ setTab(p.tabId); await wait(320); }
+        if(!document.getElementById(p.containerId)){
+          manifestRows.push({
+            Type:p.kind, Tab:p.tabId, Container:p.containerId, File:`${p.filename}.png`,
+            Status:"missing", Message:"container not found",
+          });
+          continue;
+        }
+        try{
+          await exportChartGraphic({
+            containerId:p.containerId,
+            filename:p.filename,
+            format:"png",
+            scale:2,
+            background:normalizeHexColor(C.bg,"#ffffff"),
+            title:p.title||"",
+            subtitle:`AC ${acPrimary.acNo||"-"} · ${acPrimary.acName||"-"}`,
+            note:p.kind==="table"?"Table Export":`Chart Type: ${p.chartType||"Chart"}`,
+            includeTimestamp:true,
+          });
+          manifestRows.push({
+            Type:p.kind, Tab:p.tabId, Container:p.containerId, File:`${p.filename}.png`,
+            Status:"ok", Message:"",
+          });
+        }catch(e){
+          manifestRows.push({
+            Type:p.kind, Tab:p.tabId, Container:p.containerId, File:`${p.filename}.png`,
+            Status:"failed", Message:e?.message||"capture failed",
+          });
+        }
+      }
+      for(const p of pages){
+        if(tab!==p.tabId){ setTab(p.tabId); await wait(320); }
+        if(!document.getElementById(p.containerId)){
+          manifestRows.push({
+            Type:"page", Tab:p.tabId, Container:p.containerId, File:`${p.filename}.png`,
+            Status:"missing", Message:"container not found",
+          });
+          continue;
+        }
+        try{
+          await exportChartGraphic({
+            containerId:p.containerId,
+            filename:p.filename,
+            format:"png",
+            scale:2,
+            background:normalizeHexColor(C.bg,"#ffffff"),
+            title:p.title||`${p.tabId[0].toUpperCase()+p.tabId.slice(1)} Page Snapshot`,
+            subtitle:`AC ${acPrimary.acNo||"-"} · ${acPrimary.acName||"-"}`,
+            includeTimestamp:true,
+          });
+          manifestRows.push({
+            Type:"page", Tab:p.tabId, Container:p.containerId, File:`${p.filename}.png`,
+            Status:"ok", Message:"",
+          });
+        }catch(e){
+          manifestRows.push({
+            Type:"page", Tab:p.tabId, Container:p.containerId, File:`${p.filename}.png`,
+            Status:"failed", Message:e?.message||"capture failed",
+          });
+        }
+      }
+      setTab(previousTab);
+      XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(manifestRows.length?manifestRows:[{Status:"none"}]),"Export_Manifest");
+      XLSX.writeFile(wb,sanitizeFileName(`Publication_Report_${new Date().toISOString().slice(0,10)}.xlsx`),{compression:true});
+      const misses=manifestRows.filter(r=>r.Status!=="ok");
+      if(misses.length){
+        window.alert(`Report pack exported with partial capture warnings.\nCheck Export_Manifest sheet for details.`);
+      }
 
       const html=`
       <html><head><title>Electoral Roll Analysis Report</title>
@@ -1362,6 +2016,8 @@ export default function App(){
       </head><body>
       <h1>Electoral Roll Anomaly Assessment</h1>
       <div>Generated: ${new Date().toLocaleString()}</div>
+      <div>AC Coverage: ${acCoverage||"Not available"}</div>
+      <div>Part Count: ${partCount}</div>
       <h2>Executive Summary</h2>
       <ul>
         <li>Total voters analyzed: <b>${stats.total.toLocaleString()}</b></li>
@@ -1387,7 +2043,7 @@ export default function App(){
     }finally{
       setReportBusy(false);
     }
-  },[voters,stats,needsReview,duplicateGroups,fileDuplicateGroups,anomalyRows,overrides]);
+  },[voters,stats,needsReview,duplicateGroups,fileDuplicateGroups,anomalyRows,overrides,partTrendRows,customAnalyticsRows,chartPrefs,tab]);
 
   const generateLocalAiBrief=useCallback(async()=>{
     if(!voters.length){ window.alert("Load voter data first."); return; }
@@ -1426,15 +2082,28 @@ export default function App(){
   },[voters,stats,needsReview,duplicateGroups,fileDuplicateGroups,anomalyRows,localAiEndpoint,localAiModel]);
 
   const openChartExport=useCallback((cfg)=>{
+    const el=cfg?.containerId?document.getElementById(cfg.containerId):null;
+    const rect=el?.getBoundingClientRect?.();
+    const autoWidth=Math.max(700,Math.round(rect?.width||1200));
+    const autoHeight=Math.max(380,Math.round(rect?.height||520));
+    const reg=EXPORT_REGISTRY.find(r=>r.containerId===cfg?.containerId);
+    const acNo=voters[0]?.ac_no||"-";
+    const acName=voters[0]?.ac_name||"-";
+    const chartType=cfg?.chartType||reg?.chartType||"Chart";
+    const acNote=`AC ${acNo} · ${acName}`;
     setChartExportModal({
       ...cfg,
       format:"png",
-      width:1400,
-      height:800,
+      width:autoWidth,
+      height:autoHeight,
       scale:2,
       background:normalizeHexColor(C.bg,"#ffffff"),
+      title:cfg?.title||reg?.title||"",
+      subtitle:cfg?.subtitle||reg?.subtitle||"",
+      note:cfg?.note||`Chart Type: ${chartType} · ${acNote}`,
+      includeTimestamp:true,
     });
-  },[theme]);
+  },[theme,voters]);
 
   const runChartExport=useCallback(async()=>{
     if(!chartExportModal) return;
@@ -1451,6 +2120,10 @@ export default function App(){
           height:+cfg.height||800,
           scale:+cfg.scale||2,
           background:normalizeHexColor(cfg.background,normalizeHexColor(C.bg,"#ffffff")),
+          title:cfg.title||"",
+          subtitle:cfg.subtitle||"",
+          note:cfg.note||"",
+          includeTimestamp:!!cfg.includeTimestamp,
         });
       }
       setChartExportModal(null);
@@ -1458,6 +2131,16 @@ export default function App(){
       window.alert(`Export failed: ${err?.message||"unknown error"}`);
     }
   },[chartExportModal]);
+
+  const chartColor=useMemo(()=>({
+    Active:normalizeHexColor(chartPrefs.activeColor,C.active),
+    UnderAdj:normalizeHexColor(chartPrefs.underAdjColor,C.adj),
+    Deleted:normalizeHexColor(chartPrefs.deletedColor,C.del),
+    Muslim:normalizeHexColor(chartPrefs.muslimColor,C.Muslim),
+    Hindu:normalizeHexColor(chartPrefs.hinduColor,C.Hindu),
+  }),[chartPrefs,theme]);
+
+  const labelPos=chartPrefs.valueLabelPos==="inside"?"insideTop":(chartPrefs.valueLabelPos==="right"?"right":"top");
 
 
 
@@ -1545,37 +2228,51 @@ export default function App(){
 
           {/* Adjudication pie */}
           <Panel>
-            <SH onExport={()=>openChartExport({containerId:"chartAdjPie",filename:"adj_religion_pie",rows:adjPie})}>
+            <SH onExport={()=>openChartExport({
+              containerId:"chartAdjPieBlock",
+              filename:"adj_religion_pie",
+              rows:adjPie,
+              title:"Under Adjudication by Religion",
+              subtitle:"Donut chart with category distribution",
+              chartType:"Donut/Pie",
+              note:"Legend: category and count",
+            })}>
               Under Adjudication — by Religion
             </SH>
-            <div id="chartAdjPie">
-              <ResponsiveContainer width="100%" height={200}>
-                <PieChart>
-                  <Pie data={adjPie} cx="50%" cy="50%" outerRadius={78} innerRadius={32}
-                    dataKey="value" paddingAngle={2}
-                    label={({name,value,percent})=>`${name[0]}: ${value} (${(percent*100).toFixed(0)}%)`}
-                    labelLine={false} fontSize={11}>
-                    {adjPie.map((e,i)=><Cell key={i} fill={C[e.name]||"#6b7280"}/>)}
-                  </Pie>
-                  <Tooltip {...TT} formatter={(v,n)=>[v+" voters",n]}/>
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-            {/* Legend */}
-            <div style={{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap",marginTop:4}}>
-              {adjPie.map(e=>(
-                <div key={e.name} style={{display:"flex",gap:4,alignItems:"center"}}>
-                  <div style={{width:10,height:10,borderRadius:2,background:C[e.name]||C.dim}}/>
-                  <span style={{fontSize:11,color:C.muted}}>{e.name}: {e.value}</span>
-                </div>
-              ))}
+            <div id="chartAdjPieBlock">
+              <div id="chartAdjPie">
+                <ResponsiveContainer width="100%" height={200}>
+                  <PieChart>
+                    <Pie data={adjPie} cx="50%" cy="50%" outerRadius={78} innerRadius={32}
+                      isAnimationActive={false}
+                      dataKey="value" paddingAngle={2}
+                      label={({name,value,percent})=>`${name[0]}: ${value} (${(percent*100).toFixed(0)}%)`}
+                      labelLine={false} fontSize={11}>
+                      {adjPie.map((e,i)=>{
+                        const col=e.name==="Muslim"?chartColor.Muslim:(e.name==="Hindu"?chartColor.Hindu:(e.name==="Uncertain"?C.Uncertain:C.Unknown));
+                        return <Cell key={i} fill={col}/>;
+                      })}
+                    </Pie>
+                    <Tooltip {...TT} formatter={(v,n)=>[v+" voters",n]}/>
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              {/* Legend */}
+              <div style={{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap",marginTop:4}}>
+                {adjPie.map(e=>(
+                  <div key={e.name} style={{display:"flex",gap:4,alignItems:"center"}}>
+                    <div style={{width:10,height:10,borderRadius:2,background:e.name==="Muslim"?chartColor.Muslim:(e.name==="Hindu"?chartColor.Hindu:(e.name==="Uncertain"?C.Uncertain:C.Unknown))}}/>
+                    <span style={{fontSize:11,color:C.muted}}>{e.name}: {e.value}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           </Panel>
         </div>
 
         {/* Status by religion — grouped bars with value labels */}
         <Panel>
-          <SH onExport={()=>openChartExport({containerId:"chartRelStatus",filename:"status_by_religion",rows:relBarData})}
+          <SH onExport={()=>openChartExport({containerId:"chartRelStatus",filename:"status_by_religion",rows:relBarData,title:"Status by Religion",subtitle:"Count of voters in each status category by religion"})}
             sub="Count of voters in each status category, by religion">
             Status by Religion
           </SH>
@@ -1585,18 +2282,20 @@ export default function App(){
               <ResponsiveContainer width="100%" height={220}>
                 <BarChart data={relBarData} margin={{top:20,right:10,left:0,bottom:0}}>
                   <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
-                  <XAxis dataKey="name" tick={{fill:C.muted,fontSize:12}}/>
-                  <YAxis tick={{fill:C.muted,fontSize:11}}/>
+                  <XAxis dataKey="name" tick={{fill:C.muted,fontSize:12}}
+                    label={chartPrefs.xAxisLabel?{value:chartPrefs.xAxisLabel,position:"insideBottom",offset:-6,fill:C.dim,fontSize:11}:undefined}/>
+                  <YAxis tick={{fill:C.muted,fontSize:11}}
+                    label={chartPrefs.yAxisLabel?{value:chartPrefs.yAxisLabel,angle:-90,position:"insideLeft",fill:C.dim,fontSize:11}:undefined}/>
                   <Tooltip {...TT}/>
-                  <Legend iconSize={10} wrapperStyle={{fontSize:11}}/>
-                  <Bar dataKey="Active" fill="#3b82f6" radius={[3,3,0,0]}>
-                    <LabelList dataKey="Active" position="top" style={{fill:C.dim,fontSize:10}}/>
+                  {chartPrefs.showLegend&&<Legend iconSize={10} wrapperStyle={{fontSize:11}}/>}
+                  <Bar dataKey="Active" fill={chartColor.Active} radius={[3,3,0,0]} isAnimationActive={false}>
+                    {chartPrefs.showValueLabels&&<LabelList dataKey="Active" position={labelPos} style={{fill:C.dim,fontSize:10}}/>}
                   </Bar>
-                  <Bar dataKey="Under Adj" fill={C.adj} radius={[3,3,0,0]}>
-                    <LabelList dataKey="Under Adj" position="top" style={{fill:C.adj,fontSize:10,fontWeight:700}}/>
+                  <Bar dataKey="Under Adj" fill={chartColor.UnderAdj} radius={[3,3,0,0]} isAnimationActive={false}>
+                    {chartPrefs.showValueLabels&&<LabelList dataKey="Under Adj" position={labelPos} style={{fill:chartColor.UnderAdj,fontSize:10,fontWeight:700}}/>}
                   </Bar>
-                  <Bar dataKey="Deleted" fill={C.del} radius={[3,3,0,0]}>
-                    <LabelList dataKey="Deleted" position="top" style={{fill:C.del,fontSize:10}}/>
+                  <Bar dataKey="Deleted" fill={chartColor.Deleted} radius={[3,3,0,0]} isAnimationActive={false}>
+                    {chartPrefs.showValueLabels&&<LabelList dataKey="Deleted" position={labelPos} style={{fill:chartColor.Deleted,fontSize:10}}/>}
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
@@ -1609,10 +2308,10 @@ export default function App(){
                   <XAxis type="number" unit="%" tick={{fill:C.muted,fontSize:11}} domain={[0,"auto"]}/>
                   <YAxis type="category" dataKey="name" tick={{fill:C.muted,fontSize:13}} width={70}/>
                   <Tooltip {...TT} formatter={v=>[v+"%","Adj Rate"]}/>
-                  <Bar dataKey="Adj%" name="Adj%" fill={C.adj} radius={[0,4,4,0]}>
-                    <LabelList dataKey="Adj%" position="right"
+                  <Bar dataKey="Adj%" name="Adj%" fill={chartColor.UnderAdj} radius={[0,4,4,0]} isAnimationActive={false}>
+                    {chartPrefs.showValueLabels&&<LabelList dataKey="Adj%" position="right"
                       formatter={v=>v+"%"}
-                      style={{fill:C.adj,fontSize:12,fontWeight:700}}/>
+                      style={{fill:chartColor.UnderAdj,fontSize:12,fontWeight:700}}/>}
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
@@ -1622,7 +2321,7 @@ export default function App(){
 
         {/* Relative impact — diverging comparison */}
         <Panel>
-          <SH onExport={()=>openChartExport({containerId:"chartDiverg",filename:"adjudication_comparison",rows:relBarData})}
+          <SH onExport={()=>openChartExport({containerId:"chartDiverg",filename:"adjudication_comparison",rows:relBarData,title:"Voter Status Composition by Religion",subtitle:"Stacked composition by religion"})}
             sub="Stacked bar showing composition of each religion's voter pool">
             Voter Status Composition by Religion
           </SH>
@@ -1634,13 +2333,13 @@ export default function App(){
                 <XAxis type="number" tick={{fill:C.muted,fontSize:10}} unit=" voters"/>
                 <YAxis type="category" dataKey="name" tick={{fill:C.muted,fontSize:13}} width={70}/>
                 <Tooltip {...TT}/>
-                <Legend iconSize={10} wrapperStyle={{fontSize:11}}/>
-                <Bar dataKey="Active" stackId="s" fill="#3b82f6"/>
-                <Bar dataKey="Under Adj" stackId="s" fill={C.adj}>
-                  <LabelList dataKey="Under Adj" position="insideRight"
-                    style={{fill:"#fff",fontSize:11,fontWeight:700}}/>
+                {chartPrefs.showLegend&&<Legend iconSize={10} wrapperStyle={{fontSize:11}}/>}
+                <Bar dataKey="Active" stackId="s" fill={chartColor.Active} isAnimationActive={false}/>
+                <Bar dataKey="Under Adj" stackId="s" fill={chartColor.UnderAdj} isAnimationActive={false}>
+                  {chartPrefs.showValueLabels&&<LabelList dataKey="Under Adj" position="insideRight"
+                    style={{fill:"#fff",fontSize:11,fontWeight:700}}/>}
                 </Bar>
-                <Bar dataKey="Deleted" stackId="s" fill={C.del} radius={[0,3,3,0]}/>
+                <Bar dataKey="Deleted" stackId="s" fill={chartColor.Deleted} radius={[0,3,3,0]} isAnimationActive={false}/>
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -1666,8 +2365,15 @@ export default function App(){
     return(
       <div style={{display:"flex",flexDirection:"column",gap:18}}>
         <Panel>
-          <SH>Religion × Status Cross-tabulation</SH>
-          <div style={{overflowX:"auto"}}>
+          <SH onExport={()=>exportTableImage("tblReligionCrosstab","religion_status_crosstab",{
+            title:"Religion x Status Cross-tabulation",
+            subtitle:"Counts and rates by religion",
+            note:`AC ${voters[0]?.ac_no||"-"} · ${voters[0]?.ac_name||"-"}`,
+            background:normalizeHexColor(C.bg,"#ffffff"),
+          }).catch(e=>window.alert(`Export failed: ${e?.message||"unknown error"}`))}>
+            Religion × Status Cross-tabulation
+          </SH>
+          <div id="tblReligionCrosstab" style={{overflowX:"auto"}}>
             <table style={{width:"100%",borderCollapse:"collapse",minWidth:500,fontSize:12}}>
               <thead><tr style={{borderBottom:`1px solid ${C.border}`}}>
                 {["Religion","Total","Active","Under Adj","Adj%","Deleted","Del%","Self-mapped","Self-mapped Adj"].map(h=>(
@@ -1723,7 +2429,7 @@ export default function App(){
           </Panel>
 
           <Panel>
-            <SH onExport={()=>openChartExport({containerId:"chartAdjRate",filename:"adj_del_rate_by_religion",rows:adjBarData})}
+            <SH onExport={()=>openChartExport({containerId:"chartAdjRate",filename:"adj_del_rate_by_religion",rows:adjBarData,title:"Rates by Religion",subtitle:"Adjudication and deletion rates by religion"})}
               sub="Horizontal bars — adjudication and deletion rates">
               Rates by Religion
             </SH>
@@ -1735,10 +2441,10 @@ export default function App(){
                   <XAxis type="number" unit="%" tick={{fill:C.muted,fontSize:10}} domain={[0,"auto"]}/>
                   <YAxis type="category" dataKey="name" tick={{fill:C.muted,fontSize:12}} width={70}/>
                   <Tooltip {...TT} formatter={v=>[v+"%","Adj%"]}/>
-                  <Bar dataKey="Adj%" fill={C.adj} radius={[0,4,4,0]}>
-                    <LabelList dataKey="Adj%" position="right"
+                  <Bar dataKey="Adj%" fill={chartColor.UnderAdj} radius={[0,4,4,0]} isAnimationActive={false}>
+                    {chartPrefs.showValueLabels&&<LabelList dataKey="Adj%" position="right"
                       formatter={v=>v+"%"}
-                      style={{fill:C.adj,fontSize:12,fontWeight:800}}/>
+                      style={{fill:chartColor.UnderAdj,fontSize:12,fontWeight:800}}/>}
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
@@ -1749,10 +2455,10 @@ export default function App(){
                   <XAxis type="number" unit="%" tick={{fill:C.muted,fontSize:10}} domain={[0,"auto"]}/>
                   <YAxis type="category" dataKey="name" tick={{fill:C.muted,fontSize:12}} width={70}/>
                   <Tooltip {...TT} formatter={v=>[v+"%","Del%"]}/>
-                  <Bar dataKey="Del%" fill={C.del} radius={[0,4,4,0]}>
-                    <LabelList dataKey="Del%" position="right"
+                  <Bar dataKey="Del%" fill={chartColor.Deleted} radius={[0,4,4,0]} isAnimationActive={false}>
+                    {chartPrefs.showValueLabels&&<LabelList dataKey="Del%" position="right"
                       formatter={v=>v+"%"}
-                      style={{fill:C.del,fontSize:12,fontWeight:800}}/>
+                      style={{fill:chartColor.Deleted,fontSize:12,fontWeight:800}}/>}
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
@@ -1765,7 +2471,7 @@ export default function App(){
           <SH onExport={()=>openChartExport({containerId:"chartH2H",filename:"adjudication_head_to_head",rows:[
             {metric:"Adj Rate %",Muslim:+(stats.mAR*100).toFixed(2),Hindu:+(stats.hAR*100).toFixed(2)},
             {metric:"Share of Adj'd",Muslim:stats.mV>0?+(stats.mAdj/(stats.adj||1)*100).toFixed(1):0,Hindu:stats.hV>0?+(stats.hAdj/(stats.adj||1)*100).toFixed(1):0},
-          ]})}
+          ],title:"Muslim vs Hindu: Under Adjudication",subtitle:"Head-to-head grouped comparison"})}
             sub="Muslim adjudication rate vs Hindu — grouped comparison">
             Muslim vs Hindu: Under Adjudication — Head to Head
           </SH>
@@ -1780,12 +2486,12 @@ export default function App(){
                 <XAxis dataKey="name" tick={{fill:C.muted,fontSize:12}}/>
                 <YAxis unit="%" tick={{fill:C.muted,fontSize:11}}/>
                 <Tooltip {...TT} formatter={v=>[v+"%"]}/>
-                <Legend iconSize={10} wrapperStyle={{fontSize:11}}/>
-                <Bar dataKey="Muslim" fill={C.Muslim} radius={[4,4,0,0]}>
-                  <LabelList dataKey="Muslim" position="top" style={{fill:C.Muslim,fontSize:12,fontWeight:800}} formatter={v=>v+"%"}/>
+                {chartPrefs.showLegend&&<Legend iconSize={10} wrapperStyle={{fontSize:11}}/>}
+                <Bar dataKey="Muslim" fill={chartColor.Muslim} radius={[4,4,0,0]} isAnimationActive={false}>
+                  {chartPrefs.showValueLabels&&<LabelList dataKey="Muslim" position={labelPos} style={{fill:chartColor.Muslim,fontSize:12,fontWeight:800}} formatter={v=>v+"%"}/>}
                 </Bar>
-                <Bar dataKey="Hindu" fill={C.Hindu} radius={[4,4,0,0]}>
-                  <LabelList dataKey="Hindu" position="top" style={{fill:C.Hindu,fontSize:12,fontWeight:800}} formatter={v=>v+"%"}/>
+                <Bar dataKey="Hindu" fill={chartColor.Hindu} radius={[4,4,0,0]} isAnimationActive={false}>
+                  {chartPrefs.showValueLabels&&<LabelList dataKey="Hindu" position={labelPos} style={{fill:chartColor.Hindu,fontSize:12,fontWeight:800}} formatter={v=>v+"%"}/>}
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
@@ -1825,24 +2531,39 @@ export default function App(){
     return(
       <div style={{display:"flex",flexDirection:"column",gap:18}}>
         <Panel>
-          <SH sub="★ = Self-mapped cohort: were 18–20 in 2002, now 40–44. Should carry forward without re-adjudication per ECI norms.">
+          <SH onExport={()=>openChartExport({
+            containerId:"chartAgeStatus",
+            filename:"age_group_status",
+            rows:ageData,
+            title:"Age Group x Status",
+            subtitle:"Status distribution by age cohort",
+            chartType:"Grouped bars",
+          })} sub="★ = Self-mapped cohort: were 18–20 in 2002, now 40–44. Should carry forward without re-adjudication per ECI norms.">
             Age Group × Status
           </SH>
-          <ResponsiveContainer width="100%" height={210}>
-            <BarChart data={ageData}>
-              <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
-              <XAxis dataKey="ag" tick={{fill:C.muted,fontSize:10}} angle={-10} textAnchor="end" height={44}/>
-              <YAxis tick={{fill:C.muted,fontSize:11}}/>
-              <Tooltip {...TT}/><Legend iconSize={10} wrapperStyle={{fontSize:11}}/>
-              <Bar dataKey="Active" fill={C.active} radius={[3,3,0,0]}/>
-              <Bar dataKey="Under Adj" fill={C.adj} radius={[3,3,0,0]}/>
-              <Bar dataKey="Deleted" fill={C.del} radius={[3,3,0,0]}/>
-            </BarChart>
-          </ResponsiveContainer>
+          <div id="chartAgeStatus">
+            <ResponsiveContainer width="100%" height={210}>
+              <BarChart data={ageData}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
+                <XAxis dataKey="ag" tick={{fill:C.muted,fontSize:10}} angle={-10} textAnchor="end" height={44}/>
+                <YAxis tick={{fill:C.muted,fontSize:11}}/>
+                <Tooltip {...TT}/><Legend iconSize={10} wrapperStyle={{fontSize:11}}/>
+                <Bar dataKey="Active" fill={chartColor.Active} radius={[3,3,0,0]}/>
+                <Bar dataKey="Under Adj" fill={chartColor.UnderAdj} radius={[3,3,0,0]}/>
+                <Bar dataKey="Deleted" fill={chartColor.Deleted} radius={[3,3,0,0]}/>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
         </Panel>
         <Panel>
-          <SH>Age × Religion × Adjudication Rate</SH>
-          <div style={{overflowX:"auto"}}>
+          <SH onExport={()=>exportTableImage("tblAgeReligionAdj","age_religion_adjudication_table",{
+            title:"Age x Religion x Adjudication Rate",
+            subtitle:"Detailed age-cohort analysis",
+            background:normalizeHexColor(C.bg,"#ffffff"),
+          }).catch(e=>window.alert(`Export failed: ${e?.message||"unknown error"}`))}>
+            Age × Religion × Adjudication Rate
+          </SH>
+          <div id="tblAgeReligionAdj" style={{overflowX:"auto"}}>
             <table style={{width:"100%",borderCollapse:"collapse",minWidth:500,fontSize:12}}>
               <thead><tr style={{borderBottom:`1px solid ${C.border}`}}>
                 {["Age Group","Total","Under Adj","Muslim Adj%","Hindu Adj%","Bias Ratio","Significance"].map(h=>(
@@ -1873,7 +2594,14 @@ export default function App(){
           </div>
         </Panel>
         <Panel>
-          <SH>Muslim vs Hindu Adjudication % by Age Group</SH>
+          <SH onExport={()=>openChartExport({
+            containerId:"chartAgeTrend",
+            filename:"age_cohort_trend",
+            rows:ageData,
+            title:"Muslim vs Hindu Adjudication % by Age Group",
+            subtitle:"Age-cohort trend lines",
+            chartType:"Line chart",
+          })}>Muslim vs Hindu Adjudication % by Age Group</SH>
           <div id="chartAgeTrend">
           <ResponsiveContainer width="100%" height={190}>
             <LineChart data={ageData} margin={{top:10,right:20,left:4,bottom:6}}>
@@ -1884,15 +2612,15 @@ export default function App(){
               <Legend iconSize={10} wrapperStyle={{fontSize:11}}/>
               <ReferenceLine y={overallAdjPct} stroke={C.dim} strokeDasharray="4 4"
                 label={{value:`Overall ${overallAdjPct}%`,fill:C.dim,fontSize:10,position:"insideTopRight"}}/>
-              <Line type="monotone" dataKey="mAdjPct" name="Muslim Adj%" stroke={C.Muslim}
-                strokeWidth={2.5} dot={{r:3,fill:C.Muslim}} activeDot={{r:5}}>
+              <Line type="monotone" dataKey="mAdjPct" name="Muslim Adj%" stroke={chartColor.Muslim}
+                strokeWidth={2.5} dot={{r:3,fill:chartColor.Muslim}} activeDot={{r:5}}>
                 <LabelList dataKey="mAdjPct" position="top" formatter={(v)=>`${v}%`}
-                  style={{fill:C.Muslim,fontSize:10,fontWeight:700}}/>
+                  style={{fill:chartColor.Muslim,fontSize:10,fontWeight:700}}/>
               </Line>
-              <Line type="monotone" dataKey="hAdjPct" name="Hindu Adj%" stroke={C.Hindu}
-                strokeWidth={2.5} dot={{r:3,fill:C.Hindu}} activeDot={{r:5}}>
+              <Line type="monotone" dataKey="hAdjPct" name="Hindu Adj%" stroke={chartColor.Hindu}
+                strokeWidth={2.5} dot={{r:3,fill:chartColor.Hindu}} activeDot={{r:5}}>
                 <LabelList dataKey="hAdjPct" position="bottom" formatter={(v)=>`${v}%`}
-                  style={{fill:C.Hindu,fontSize:10,fontWeight:700}}/>
+                  style={{fill:chartColor.Hindu,fontSize:10,fontWeight:700}}/>
               </Line>
             </LineChart>
           </ResponsiveContainer>
@@ -1904,7 +2632,7 @@ export default function App(){
 
   const renderCustomAnalytics=()=>{
     const metricKey=caMetric;
-    const barData=customAnalyticsRows.map(r=>({
+    const baseData=customAnalyticsRows.map(r=>({
       group:r.group,
       value:r[metricKey]??0,
       total:r.total,
@@ -1913,7 +2641,24 @@ export default function App(){
       active:r.active,
       m:r.m,
       h:r.h,
+      male:r.male||0,
+      female:r.female||0,
     }));
+    const stackedData=baseData.map(r=>{
+      let keys={};
+      if(caStackBy==="religion"){
+        keys={Muslim:r.m||0,Hindu:r.h||0,Uncertain:Math.max(0,(r.total||0)-(r.m||0)-(r.h||0))};
+      }else if(caStackBy==="gender"){
+        keys={Male:r.male||0,Female:r.female||0,Other:Math.max(0,(r.total||0)-(r.male||0)-(r.female||0))};
+      }else{
+        keys={Active:r.active||0,"Under Adj":r.adj||0,Deleted:r.del||0};
+      }
+      if(caMode==="stacked100"){
+        const denom=Math.max(1,Object.values(keys).reduce((s,n)=>s+(Number(n)||0),0));
+        Object.keys(keys).forEach(k=>{ keys[k]=+(((Number(keys[k])||0)/denom)*100).toFixed(2); });
+      }
+      return {...r,...keys};
+    });
     const metricLabel={
       adj_rate:"Adjudication Rate %",
       del_rate:"Deletion Rate %",
@@ -1921,6 +2666,22 @@ export default function App(){
       muslim_share:"Muslim Share %",
       hindu_share:"Hindu Share %",
     }[caMetric]||caMetric;
+    const stackKeys=caStackBy==="religion"
+      ?["Muslim","Hindu","Uncertain"]
+      :caStackBy==="gender"
+        ?["Male","Female","Other"]
+        :["Active","Under Adj","Deleted"];
+    const stackColors={
+      Active:chartColor.Active,
+      "Under Adj":chartColor.UnderAdj,
+      Deleted:chartColor.Deleted,
+      Muslim:chartColor.Muslim,
+      Hindu:chartColor.Hindu,
+      Uncertain:C.Uncertain,
+      Male:C.blue,
+      Female:C.Hindu,
+      Other:C.dim,
+    };
     return(
       <div style={{display:"flex",flexDirection:"column",gap:16}}>
         <Panel>
@@ -1950,28 +2711,64 @@ export default function App(){
               <option value="adj">Filter: Under Adjudication</option>
               <option value="deleted">Filter: Deleted</option>
             </select>
-            <button onClick={()=>openChartExport({containerId:"chartCustomAnalytics",filename:`custom_${caGroupBy}_${caMetric}`,rows:barData})}
+            <select value={caMode} onChange={e=>setCaMode(e.target.value)}
+              style={{padding:"6px 10px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,fontSize:12}}>
+              <option value="grouped">Mode: Grouped</option>
+              <option value="stacked">Mode: Stacked</option>
+              <option value="stacked100">Mode: 100% Stacked</option>
+            </select>
+            {(caMode==="stacked"||caMode==="stacked100")&&(
+              <select value={caStackBy} onChange={e=>setCaStackBy(e.target.value)}
+                style={{padding:"6px 10px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,fontSize:12}}>
+                <option value="status">Stack by Status</option>
+                <option value="religion">Stack by Religion</option>
+                <option value="gender">Stack by Gender</option>
+              </select>
+            )}
+            <button onClick={()=>openChartExport({
+              containerId:"chartCustomAnalytics",
+              filename:`custom_${caGroupBy}_${caMetric}_${caMode}`,
+              rows:caMode==="grouped"?baseData:stackedData,
+              chartType:caMode==="grouped"?"Grouped bar":(caMode==="stacked"?"Stacked bar":"100% stacked bar"),
+              note:`Mode: ${caMode} · Stack: ${caMode==="grouped"?"N/A":caStackBy}`,
+            })}
               style={{padding:"6px 12px",background:C.blue+"22",border:`1px solid ${C.blue}44`,borderRadius:6,color:C.blue,fontSize:12,cursor:"pointer"}}>
               Export Chart
             </button>
           </div>
           <div id="chartCustomAnalytics">
             <ResponsiveContainer width="100%" height={280}>
-              <BarChart data={barData} margin={{top:20,right:20,left:0,bottom:60}}>
+              <BarChart data={caMode==="grouped"?baseData:stackedData} margin={{top:20,right:20,left:0,bottom:60}}>
                 <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
                 <XAxis dataKey="group" tick={{fill:C.muted,fontSize:10}} angle={-30} textAnchor="end" interval={0}/>
-                <YAxis tick={{fill:C.muted,fontSize:11}}/>
+                <YAxis tick={{fill:C.muted,fontSize:11}} domain={caMode==="stacked100"?[0,100]:"auto"}/>
                 <Tooltip {...TT}/>
-                <Bar dataKey="value" name={metricLabel} fill={C.blue} radius={[4,4,0,0]}>
-                  <LabelList dataKey="value" position="top" formatter={(v)=>typeof v==="number"?v.toFixed(2):v} style={{fill:C.dim,fontSize:10}}/>
-                </Bar>
+                {chartPrefs.showLegend&&<Legend iconSize={10} wrapperStyle={{fontSize:11}}/>}
+                {caMode==="grouped" ? (
+                  <Bar dataKey="value" name={metricLabel} fill={C.blue} radius={[4,4,0,0]}>
+                    {chartPrefs.showValueLabels&&<LabelList dataKey="value" position="top" formatter={(v)=>typeof v==="number"?v.toFixed(2):v} style={{fill:C.dim,fontSize:10}}/>}
+                  </Bar>
+                ) : (
+                  stackKeys.map((k,idx)=>(
+                    <Bar key={k} dataKey={k} stackId="s" name={k} fill={stackColors[k]||C.blue} radius={idx===stackKeys.length-1?[4,4,0,0]:undefined}>
+                      {chartPrefs.showValueLabels&&<LabelList dataKey={k} position={caMode==="stacked100"?"insideTop":"top"} style={{fill:C.dim,fontSize:10}}/>}
+                    </Bar>
+                  ))
+                )}
               </BarChart>
             </ResponsiveContainer>
           </div>
         </Panel>
         <Panel>
-          <SH sub={`${customAnalyticsRows.length} groups`}>Custom Analysis Table</SH>
-          <div style={{overflowX:"auto"}}>
+          <SH sub={`${customAnalyticsRows.length} groups`}
+            onExport={()=>exportTableImage("tblCustomAnalytics",`custom_analytics_table_${caMode}`,{
+              title:"Custom Analytics Table",
+              subtitle:`Mode: ${caMode} · Stack: ${caStackBy}`,
+              background:normalizeHexColor(C.bg,"#ffffff"),
+            }).catch(e=>window.alert(`Export failed: ${e?.message||"unknown error"}`))}>
+            Custom Analysis Table
+          </SH>
+          <div id="tblCustomAnalytics" style={{overflowX:"auto"}}>
             <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,minWidth:760}}>
               <thead><tr style={{borderBottom:`1px solid ${C.border}`}}>
                 {["Group","Total","Active","Adj","Del","Adj%","Del%","Muslim","Hindu","Muslim%","Hindu%"].map(h=>(
@@ -2004,8 +2801,310 @@ export default function App(){
 
   const renderTrends=()=>{
     const topFlags=[...partTrendRows].filter(r=>r.fdrSig).sort((a,b)=>Math.abs(b.diffPct)-Math.abs(a.diffPct)).slice(0,20);
+    const partCompRows=[...new Set(filtered.map(v=>v.part_no))].sort((a,b)=>(+a||0)-(+b||0)).map(pt=>{
+      const pv=filtered.filter(v=>v.part_no===pt);
+      const mRows=pv.filter(v=>effRel(v)==="Muslim");
+      const hRows=pv.filter(v=>effRel(v)==="Hindu");
+      const muslim=mRows.length;
+      const hindu=hRows.length;
+      const uncertain=pv.filter(v=>effRel(v)==="Uncertain").length;
+      const unknown=pv.filter(v=>effRel(v)==="Unknown").length;
+      const active=pv.filter(v=>v.status==="Active").length;
+      const underAdj=pv.filter(v=>v.status==="Under Adjudication").length;
+      const deleted=pv.filter(v=>v.status==="Deleted").length;
+      const mActive=mRows.filter(v=>v.status==="Active").length;
+      const mAdj=mRows.filter(v=>v.status==="Under Adjudication").length;
+      const mDel=mRows.filter(v=>v.status==="Deleted").length;
+      const hActive=hRows.filter(v=>v.status==="Active").length;
+      const hAdj=hRows.filter(v=>v.status==="Under Adjudication").length;
+      const hDel=hRows.filter(v=>v.status==="Deleted").length;
+      const tot=Math.max(1,pv.length);
+      return{
+        part:String(pt), total:pv.length,
+        muslim,hindu,uncertain,unknown,active,underAdj,deleted,
+        mActive,mAdj,mDel,hActive,hAdj,hDel,
+        muslimPct:+((muslim/tot)*100).toFixed(2),
+        hinduPct:+((hindu/tot)*100).toFixed(2),
+        uncertainPct:+((uncertain/tot)*100).toFixed(2),
+        unknownPct:+((unknown/tot)*100).toFixed(2),
+        activePct:+((active/tot)*100).toFixed(2),
+        underAdjPct:+((underAdj/tot)*100).toFixed(2),
+        deletedPct:+((deleted/tot)*100).toFixed(2),
+      };
+    });
+    const countMax=Math.max(10,...partCompRows.map(r=>r.total||0));
+    const yDomain=partVizMode==="share"?[0,100]:(partVizSyncY?[0,countMax]:"auto");
+    const relRows=partCompRows.map(r=>partVizMode==="share"?({
+      part:r.part, Muslim:r.muslimPct, Hindu:r.hinduPct, Uncertain:r.uncertainPct, Unknown:r.unknownPct,
+    }):({
+      part:r.part, Muslim:r.muslim, Hindu:r.hindu, Uncertain:r.uncertain, Unknown:r.unknown,
+    }));
+    const statusRows=partCompRows.map(r=>partVizMode==="share"?({
+      part:r.part, Active:r.activePct, "Under Adj":r.underAdjPct, Deleted:r.deletedPct,
+    }):({
+      part:r.part, Active:r.active, "Under Adj":r.underAdj, Deleted:r.deleted,
+    }));
+    const tripleCats=partTripleDim==="religion"
+      ?["Muslim","Hindu","Uncertain","Unknown"]
+      :["18–22","23–30","31–39","40–44★","45–60","60+","Unknown"];
+    const tripleColor=(k)=>{
+      if(k==="Muslim") return chartColor.Muslim;
+      if(k==="Hindu") return chartColor.Hindu;
+      if(k==="Uncertain") return C.Uncertain;
+      if(k==="Unknown") return C.Unknown;
+      if(k==="18–22") return "#0ea5e9";
+      if(k==="23–30") return "#22c55e";
+      if(k==="31–39") return "#3b82f6";
+      if(k==="40–44★") return "#f59e0b";
+      if(k==="45–60") return "#ef4444";
+      if(k==="60+") return "#8b5cf6";
+      return C.dim;
+    };
+    const tripleRowsByPart=[...new Set(filtered.map(v=>v.part_no))].sort((a,b)=>(+a||0)-(+b||0)).map(pt=>{
+      const pv=filtered.filter(v=>v.part_no===pt);
+      const pop={}; const ua={}; const dl={};
+      tripleCats.forEach(c=>{ pop[c]=0; ua[c]=0; dl[c]=0; });
+      pv.forEach(v=>{
+        const key=partTripleDim==="religion"?(effRel(v)||"Unknown"):(v.ageGroup||"Unknown");
+        if(!(key in pop)) return;
+        pop[key]+=1;
+        if(v.status==="Under Adjudication") ua[key]+=1;
+        if(v.status==="Deleted") dl[key]+=1;
+      });
+      const norm=(obj)=>{
+        if(partTripleMode!=="share") return obj;
+        const tot=Object.values(obj).reduce((s,n)=>s+(Number(n)||0),0)||1;
+        const out={}; Object.keys(obj).forEach(k=>{ out[k]=+((obj[k]/tot)*100).toFixed(2); });
+        return out;
+      };
+      return { part:String(pt), total:pv.length, pop:norm(pop), ua:norm(ua), dl:norm(dl) };
+    });
+    const triplePopRows=tripleRowsByPart.map(r=>({part:r.part,...r.pop}));
+    const tripleUaRows=tripleRowsByPart.map(r=>({part:r.part,...r.ua}));
+    const tripleDlRows=tripleRowsByPart.map(r=>({part:r.part,...r.dl}));
+    const tripleMax=Math.max(10,
+      ...triplePopRows.map(r=>tripleCats.reduce((s,k)=>s+(r[k]||0),0)),
+      ...tripleUaRows.map(r=>tripleCats.reduce((s,k)=>s+(r[k]||0),0)),
+      ...tripleDlRows.map(r=>tripleCats.reduce((s,k)=>s+(r[k]||0),0)),
+    );
+    const totalDonutPages=Math.max(1,Math.ceil(partCompRows.length/Math.max(1,donutPerPage)));
+    const safeDonutPage=Math.min(donutPage,totalDonutPages-1);
+    const donutRows=partCompRows.slice(safeDonutPage*donutPerPage,(safeDonutPage+1)*donutPerPage);
+    const musBase=normalizeHexColor(chartColor.Muslim,C.Muslim);
+    const hinBase=normalizeHexColor(chartColor.Hindu,C.Hindu);
+    const donutParts=donutRows.map(r=>{
+      const slices=[
+        { key:"M_OK", label:"M OK", value:r.mActive, color:tintHex(musBase,0.15) },
+        { key:"M_UA", label:"M UA", value:r.mAdj, color:tintHex(musBase,-0.18) },
+        { key:"M_DL", label:"M DL", value:r.mDel, color:tintHex(musBase,0.35) },
+        { key:"H_OK", label:"H OK", value:r.hActive, color:tintHex(hinBase,0.12) },
+        { key:"H_UA", label:"H UA", value:r.hAdj, color:tintHex(hinBase,-0.12) },
+        { key:"H_DL", label:"H DL", value:r.hDel, color:tintHex(hinBase,0.3) },
+      ];
+      return {part:r.part,total:r.total,slices};
+    });
+    const donutLabel=(part)=>(p)=>{
+      const {name,value,percent,cx,cy,midAngle,outerRadius}=p;
+      if(!value || percent<0.03) return null;
+      const RAD=Math.PI/180;
+      const r=(outerRadius||0)+18;
+      const x=(cx||0)+r*Math.cos(-(midAngle||0)*RAD);
+      const y=(cy||0)+r*Math.sin(-(midAngle||0)*RAD);
+      const anchor=x>(cx||0)?"start":"end";
+      return <text x={x} y={y} fill={C.muted} textAnchor={anchor} fontSize={10}>{`${name}: ${value}`}</text>;
+    };
     return(
       <div style={{display:"flex",flexDirection:"column",gap:16}}>
+        <Panel>
+          <SH onExport={()=>openChartExport({
+            containerId:"chartPartTripleBars",
+            filename:`part_triple_${partTripleDim}_${partTripleMode}`,
+            rows:tripleRowsByPart,
+            title:"Part-wise Triple Stacked Bars",
+            subtitle:`Population / Under Adjudication / Deleted by ${partTripleDim==="religion"?"religion":"age group"}`,
+            chartType:`Triple stacked bars (${partTripleMode})`,
+          })} sub="Each part has three synchronized stacked views: whole population, under-adjudication composition, and deleted composition.">
+            Part-wise Triple Bars
+          </SH>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10,alignItems:"center"}}>
+            <select value={partTripleDim} onChange={e=>setPartTripleDim(e.target.value)}
+              style={{padding:"6px 10px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,fontSize:12}}>
+              <option value="religion">Split by Religion</option>
+              <option value="age">Split by Age Group</option>
+            </select>
+            <select value={partTripleMode} onChange={e=>setPartTripleMode(e.target.value)}
+              style={{padding:"6px 10px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,fontSize:12}}>
+              <option value="absolute">Absolute values</option>
+              <option value="share">100% stacked share</option>
+            </select>
+            <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:C.text}}>
+              Height
+              <input type="range" min="180" max="360" step="10" value={partTripleHeight}
+                onChange={e=>setPartTripleHeight(+e.target.value)}
+                style={{accentColor:C.blue}}/>
+              <span style={{color:C.dim,fontFamily:MONO,fontSize:11}}>{partTripleHeight}px</span>
+            </label>
+          </div>
+          <div id="chartPartTripleBars" style={{display:"grid",gridTemplateColumns:"1fr",gap:10}}>
+            <div style={{fontSize:11,color:C.dim}}>Population composition</div>
+            <ResponsiveContainer width="100%" height={partTripleHeight}>
+              <BarChart data={triplePopRows} syncId="partTripleSync" margin={{top:10,right:16,left:4,bottom:50}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
+                <XAxis dataKey="part" tick={{fill:C.muted,fontSize:10}} angle={-28} textAnchor="end" interval={0}/>
+                <YAxis tick={{fill:C.muted,fontSize:11}} domain={partTripleMode==="share"?[0,100]:[0,tripleMax]} unit={partTripleMode==="share"?"%":""}/>
+                <Tooltip {...TT}/>
+                <Legend iconSize={10} wrapperStyle={{fontSize:11}}/>
+                {tripleCats.map((k,idx)=><Bar key={`pop_${k}`} dataKey={k} stackId="p" fill={tripleColor(k)} radius={idx===tripleCats.length-1?[4,4,0,0]:undefined}/>)}
+              </BarChart>
+            </ResponsiveContainer>
+            <div style={{fontSize:11,color:C.dim}}>Under Adjudication composition</div>
+            <ResponsiveContainer width="100%" height={partTripleHeight}>
+              <BarChart data={tripleUaRows} syncId="partTripleSync" margin={{top:10,right:16,left:4,bottom:50}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
+                <XAxis dataKey="part" tick={{fill:C.muted,fontSize:10}} angle={-28} textAnchor="end" interval={0}/>
+                <YAxis tick={{fill:C.muted,fontSize:11}} domain={partTripleMode==="share"?[0,100]:[0,tripleMax]} unit={partTripleMode==="share"?"%":""}/>
+                <Tooltip {...TT}/>
+                {tripleCats.map((k,idx)=><Bar key={`ua_${k}`} dataKey={k} stackId="u" fill={tripleColor(k)} radius={idx===tripleCats.length-1?[4,4,0,0]:undefined}/>)}
+              </BarChart>
+            </ResponsiveContainer>
+            <div style={{fontSize:11,color:C.dim}}>Deleted composition</div>
+            <ResponsiveContainer width="100%" height={partTripleHeight}>
+              <BarChart data={tripleDlRows} syncId="partTripleSync" margin={{top:10,right:16,left:4,bottom:50}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
+                <XAxis dataKey="part" tick={{fill:C.muted,fontSize:10}} angle={-28} textAnchor="end" interval={0}/>
+                <YAxis tick={{fill:C.muted,fontSize:11}} domain={partTripleMode==="share"?[0,100]:[0,tripleMax]} unit={partTripleMode==="share"?"%":""}/>
+                <Tooltip {...TT}/>
+                {tripleCats.map((k,idx)=><Bar key={`dl_${k}`} dataKey={k} stackId="d" fill={tripleColor(k)} radius={idx===tripleCats.length-1?[4,4,0,0]:undefined}/>)}
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </Panel>
+        <Panel>
+          <SH onExport={()=>openChartExport({
+            containerId:"chartPartPopulationBundle",
+            filename:`part_population_composition_${partVizMode}`,
+            rows:partCompRows,
+            title:"Part-wise Population Composition",
+            subtitle:"Stacked religion and status composition by part",
+            chartType:`Synchronized stacked bars (${partVizMode})`,
+            note:`Mode: ${partVizMode} · Sync-Y: ${partVizSyncY?"On":"Off"}`,
+          })} sub="Each part as a stacked bar. Two synchronized views: religion composition and status composition.">
+            Part-wise Population Composition
+          </SH>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
+            <select value={partVizMode} onChange={e=>setPartVizMode(e.target.value)}
+              style={{padding:"6px 10px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,fontSize:12}}>
+              <option value="count">Mode: Absolute counts</option>
+              <option value="share">Mode: 100% stacked share</option>
+            </select>
+            <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:C.text,padding:"0 4px"}}>
+              Height
+              <input type="range" min="180" max="420" step="10" value={partVizHeight}
+                onChange={e=>setPartVizHeight(+e.target.value)}
+                style={{accentColor:C.blue}}/>
+              <span style={{color:C.dim,fontFamily:MONO,fontSize:11}}>{partVizHeight}px</span>
+            </label>
+            <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:C.text}}>
+              <input type="checkbox" checked={partVizSyncY} onChange={e=>setPartVizSyncY(e.target.checked)}/>
+              Keep Y-axis synced
+            </label>
+          </div>
+          <div id="chartPartPopulationBundle" style={{display:"grid",gridTemplateColumns:"1fr",gap:10}}>
+            <div>
+              <div style={{fontSize:11,color:C.dim,marginBottom:4}}>Religion composition by part</div>
+              <ResponsiveContainer width="100%" height={partVizHeight}>
+                <BarChart data={relRows} syncId="partStackSync" margin={{top:10,right:16,left:4,bottom:50}}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
+                  <XAxis dataKey="part" tick={{fill:C.muted,fontSize:10}} angle={-28} textAnchor="end" interval={0}/>
+                  <YAxis tick={{fill:C.muted,fontSize:11}} domain={yDomain} unit={partVizMode==="share"?"%":""}/>
+                  <Tooltip {...TT}/>
+                  <Legend iconSize={10} wrapperStyle={{fontSize:11}}/>
+                  <Bar dataKey="Muslim" stackId="s" fill={chartColor.Muslim}/>
+                  <Bar dataKey="Hindu" stackId="s" fill={chartColor.Hindu}/>
+                  <Bar dataKey="Uncertain" stackId="s" fill={C.Uncertain}/>
+                  <Bar dataKey="Unknown" stackId="s" fill={C.Unknown}/>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <div>
+              <div style={{fontSize:11,color:C.dim,marginBottom:4}}>Status composition by part</div>
+              <ResponsiveContainer width="100%" height={partVizHeight}>
+                <BarChart data={statusRows} syncId="partStackSync" margin={{top:10,right:16,left:4,bottom:50}}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
+                  <XAxis dataKey="part" tick={{fill:C.muted,fontSize:10}} angle={-28} textAnchor="end" interval={0}/>
+                  <YAxis tick={{fill:C.muted,fontSize:11}} domain={yDomain} unit={partVizMode==="share"?"%":""}/>
+                  <Tooltip {...TT}/>
+                  <Legend iconSize={10} wrapperStyle={{fontSize:11}}/>
+                  <Bar dataKey="Active" stackId="k" fill={chartColor.Active}/>
+                  <Bar dataKey="Under Adj" stackId="k" fill={chartColor.UnderAdj}/>
+                  <Bar dataKey="Deleted" stackId="k" fill={chartColor.Deleted}/>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </Panel>
+        <Panel>
+          <SH onExport={()=>openChartExport({
+            containerId:"chartPartDonutGrid",
+            filename:`part_donut_grid_p${safeDonutPage+1}`,
+            rows:donutRows,
+            title:"Part-wise Muslim/Hindu Status Donuts",
+            subtitle:`Page ${safeDonutPage+1}/${totalDonutPages} · ${donutRows.length} part(s)`,
+            chartType:"Donut small multiples",
+            note:"Slices: M/H split with OK, UA, DL shades",
+          })} sub="For each part: Muslim and Hindu shares split into OK / UA / DL shades with callout labels.">
+            Part-wise Targeting Donuts
+          </SH>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10,alignItems:"center"}}>
+            <label style={{fontSize:12,color:C.text,display:"flex",alignItems:"center",gap:6}}>
+              Parts per page
+              <select value={donutPerPage} onChange={e=>{setDonutPerPage(+e.target.value||8);setDonutPage(0);}}
+                style={{padding:"5px 8px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,fontSize:12}}>
+                <option value="4">4</option>
+                <option value="6">6</option>
+                <option value="8">8</option>
+                <option value="12">12</option>
+              </select>
+            </label>
+            <span style={{fontSize:11,color:C.dim,fontFamily:MONO}}>
+              Page {safeDonutPage+1}/{totalDonutPages}
+            </span>
+            <button onClick={()=>setDonutPage(p=>Math.max(0,p-1))}
+              disabled={safeDonutPage===0}
+              style={{padding:"4px 10px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontSize:11,cursor:"pointer"}}>
+              Prev
+            </button>
+            <button onClick={()=>setDonutPage(p=>Math.min(totalDonutPages-1,p+1))}
+              disabled={safeDonutPage>=totalDonutPages-1}
+              style={{padding:"4px 10px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontSize:11,cursor:"pointer"}}>
+              Next
+            </button>
+          </div>
+          <div id="chartPartDonutGrid" style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(250px,1fr))",gap:12}}>
+            {donutParts.length===0&&(
+              <div style={{gridColumn:"1 / -1",padding:20,textAlign:"center",color:C.dim,fontSize:12}}>
+                No part data available for current filters.
+              </div>
+            )}
+            {donutParts.map(d=>(
+              <div key={d.part} style={{border:`1px solid ${C.border}`,borderRadius:10,padding:10,background:C.bg}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                  <div style={{fontSize:12,fontWeight:700,color:C.text}}>Part {d.part}</div>
+                  <div style={{fontSize:10,color:C.dim,fontFamily:MONO}}>{d.total} voters</div>
+                </div>
+                <ResponsiveContainer width="100%" height={190}>
+                  <PieChart>
+                    <Pie data={d.slices} dataKey="value" nameKey="label" cx="50%" cy="50%"
+                      outerRadius={62} innerRadius={30} paddingAngle={1} labelLine={true} label={donutLabel(d.part)}>
+                      {d.slices.map((s,i)=><Cell key={`${d.part}_${s.key}_${i}`} fill={s.color}/>)}
+                    </Pie>
+                    <Tooltip {...TT} formatter={(v,n)=>[`${v} voters`,n]}/>
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            ))}
+          </div>
+        </Panel>
         <Panel>
           <SH sub="Per-part Muslim vs Hindu adjudication decomposition with effect sizes and FDR correction">
             Part Trend Decomposition
@@ -2024,8 +3123,8 @@ export default function App(){
                 <YAxis tick={{fill:C.muted,fontSize:11}} unit="%"/>
                 <Tooltip {...TT}/>
                 <Legend iconSize={10} wrapperStyle={{fontSize:11}}/>
-                <Line type="monotone" dataKey="mRate" name="Muslim Adj%" stroke={C.Muslim} strokeWidth={2} dot={false}/>
-                <Line type="monotone" dataKey="hRate" name="Hindu Adj%" stroke={C.Hindu} strokeWidth={2} dot={false}/>
+                <Line type="monotone" dataKey="mRate" name="Muslim Adj%" stroke={chartColor.Muslim} strokeWidth={2} dot={false}/>
+                <Line type="monotone" dataKey="hRate" name="Hindu Adj%" stroke={chartColor.Hindu} strokeWidth={2} dot={false}/>
                 <Line type="monotone" dataKey="diffPct" name="Risk Difference (pp)" stroke={C.blue} strokeDasharray="5 3" strokeWidth={1.6} dot={false}/>
               </LineChart>
             </ResponsiveContainer>
@@ -2099,6 +3198,15 @@ export default function App(){
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
             <SH>All Booths — Summary ({parts.length} parts)</SH>
             <div style={{display:"flex",gap:8}}>
+              <button onClick={()=>exportTableImage("tblBoothSummary","booths_summary_table",{
+                title:"All Booths Summary",
+                subtitle:`${parts.length} parts`,
+                background:normalizeHexColor(C.bg,"#ffffff"),
+              }).catch(e=>window.alert(`Export failed: ${e?.message||"unknown error"}`))}
+                style={{padding:"5px 12px",background:C.panel,border:`1px solid ${C.border}`,
+                  borderRadius:6,color:C.muted,fontSize:12,cursor:"pointer",fontFamily:FONT}}>
+                🖼 Export Image
+              </button>
               <button onClick={()=>exportXLSX(buildSummaryRows(voters),"BoothSummary.xlsx","Summary")}
                 style={{padding:"5px 12px",background:C.blue+"22",border:`1px solid ${C.blue}44`,
                   borderRadius:6,color:C.blue,fontSize:12,cursor:"pointer",fontFamily:FONT}}>
@@ -2111,7 +3219,7 @@ export default function App(){
               </button>
             </div>
           </div>
-          <div style={{maxHeight:300,overflowY:"auto"}}>
+          <div id="tblBoothSummary" style={{maxHeight:300,overflowY:"auto"}}>
             <table style={{width:"100%",borderCollapse:"collapse",minWidth:500,fontSize:11}}>
               <thead style={{position:"sticky",top:0,background:C.panel}}>
                 <tr style={{borderBottom:`1px solid ${C.border}`}}>
@@ -2155,6 +3263,15 @@ export default function App(){
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap",gap:8}}>
               <SH>Part {boothPart} — Voter List ({boothVoters.length.toLocaleString()} voters)</SH>
               <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                <button onClick={()=>exportTableImage("tblBoothVoterList",`booth_part_${boothPart}_table`,{
+                  title:`Part ${boothPart} Voter List`,
+                  subtitle:`${boothVoters.length.toLocaleString()} voters`,
+                  background:normalizeHexColor(C.bg,"#ffffff"),
+                }).catch(e=>window.alert(`Export failed: ${e?.message||"unknown error"}`))}
+                  style={{padding:"4px 10px",background:C.panel,border:`1px solid ${C.border}`,
+                    borderRadius:5,color:C.muted,fontSize:11,cursor:"pointer",fontFamily:FONT}}>
+                  🖼 Export Image
+                </button>
                 <button onClick={()=>{
                   const pv=voters.filter(v=>v.part_no===boothPart).map(v=>toExportRow({...v,override:overrides[v._uid]||null}));
                   exportXLSX(pv,`Part_${boothPart}_VoterRoll.xlsx`,`Part_${boothPart}`);
@@ -2200,7 +3317,7 @@ export default function App(){
             </div>
 
             {/* Voter table */}
-            <div style={{overflowX:"auto"}}>
+            <div id="tblBoothVoterList" style={{overflowX:"auto"}}>
               <table style={{width:"100%",borderCollapse:"collapse",minWidth:500,fontSize:11.5}}>
                 <thead>
                   <tr style={{borderBottom:`1px solid ${C.border}`}}>
@@ -2224,12 +3341,16 @@ export default function App(){
                     const isEditing=editingId===v._uid;
                     return(
                       <tr key={v._uid} style={{borderBottom:`1px solid ${C.bg}`,
-                        background:v.status==="Under Adjudication"?C.adj+"08":
-                                   v.status==="Deleted"?C.del+"08":""}}
-                        onMouseEnter={e=>e.currentTarget.style.background=C.bg}
+                        background:v.status==="Under Adjudication"?C.adj+"1f":
+                                   v.status==="Deleted"?C.del+"1f":"",
+                        borderLeft:v.status==="Under Adjudication"?`3px solid ${C.adj}`:
+                                  v.status==="Deleted"?`3px solid ${C.del}`:"3px solid transparent"}}
+                        onMouseEnter={e=>e.currentTarget.style.background=
+                          v.status==="Under Adjudication"?C.adj+"28":
+                          v.status==="Deleted"?C.del+"28":C.bg}
                         onMouseLeave={e=>e.currentTarget.style.background=
-                          v.status==="Under Adjudication"?C.adj+"08":
-                          v.status==="Deleted"?C.del+"08":""}>
+                          v.status==="Under Adjudication"?C.adj+"1f":
+                          v.status==="Deleted"?C.del+"1f":""}>
                         <td style={{padding:"5px 8px",textAlign:"center",color:C.dim,fontFamily:MONO}}>{v.serial_no}</td>
                         <td style={{padding:"5px 8px",color:C.dim,fontFamily:MONO,fontSize:10}}>{v.voter_id}</td>
                         <td style={{padding:"5px 8px",color:C.text,fontWeight:600,minWidth:140}}>{v.name}</td>
@@ -2263,12 +3384,19 @@ export default function App(){
                               </select>
                             </div>
                           ):(
-                            <button onClick={()=>setEditingId(v._uid)}
-                              style={{padding:"2px 8px",background:"transparent",
-                                border:`1px solid ${C.border}`,borderRadius:4,
-                                color:ov?C.yellow:C.dim,fontSize:10,cursor:"pointer",fontFamily:FONT}}>
-                              {ov?"✎ "+ov:"✎ Edit"}
-                            </button>
+                            <div style={{display:"flex",gap:4,justifyContent:"center"}}>
+                              <button onClick={()=>setEditingId(v._uid)}
+                                style={{padding:"2px 8px",background:"transparent",
+                                  border:`1px solid ${C.border}`,borderRadius:4,
+                                  color:ov?C.yellow:C.dim,fontSize:10,cursor:"pointer",fontFamily:FONT}}>
+                                {ov?"✎ "+ov:"✎ Rel"}
+                              </button>
+                              <button onClick={()=>openVoterEditor(v)}
+                                style={{padding:"2px 8px",background:"transparent",border:`1px solid ${C.border}`,
+                                  borderRadius:4,color:C.blue,fontSize:10,cursor:"pointer",fontFamily:FONT}}>
+                                Edit
+                              </button>
+                            </div>
                           )}
                         </td>
                       </tr>
@@ -2336,6 +3464,15 @@ export default function App(){
             </span>}
           </span>
           <div style={{display:"flex",gap:8}}>
+            <button onClick={()=>exportTableImage("tblVotersGlobal","voters_table",{
+              title:"Voters Table",
+              subtitle:`Filtered records: ${filtered.length.toLocaleString()}`,
+              background:normalizeHexColor(C.bg,"#ffffff"),
+            }).catch(e=>window.alert(`Export failed: ${e?.message||"unknown error"}`))}
+              style={{padding:"5px 12px",background:C.panel,border:`1px solid ${C.border}`,
+                borderRadius:6,color:C.muted,fontSize:12,cursor:"pointer",fontFamily:FONT}}>
+              🖼 Export Image
+            </button>
             <button onClick={()=>exportXLSX(filtered.map(v=>toExportRow({...v,override:overrides[v._uid]||null})),
               `FilteredVoters_${new Date().toISOString().slice(0,10)}.xlsx`,"Voters")}
               style={{padding:"5px 12px",background:C.blue+"22",border:`1px solid ${C.blue}44`,
@@ -2349,17 +3486,17 @@ export default function App(){
             </button>
           </div>
         </div>
-        <div style={{overflowX:"auto",background:C.panel,borderRadius:10,border:`1px solid ${C.border}`}}>
+        <div id="tblVotersGlobal" style={{overflowX:"auto",background:C.panel,borderRadius:10,border:`1px solid ${C.border}`}}>
           <table style={{width:"100%",borderCollapse:"collapse",minWidth:500,fontSize:11.5}}>
             <thead>
               <tr style={{borderBottom:`1px solid ${C.border}`}}>
                 {[["serial_no","#"],["part_no","Part"],["voter_id","Voter ID"],["name","Name"],
                   ["age","Age"],["gender","G"],["relation_name","Father/Husband"],
-                  ["status","Status"],["_rel","Religion"],["ageGroup","Age Grp"]].map(([k,lbl])=>(
-                  <th key={k} onClick={()=>doSort(k)}
+                  ["status","Status"],["_rel","Religion"],["ageGroup","Age Grp"],["_edit","Edit"]].map(([k,lbl])=>(
+                  <th key={k} onClick={()=>{if(k!=="_edit") doSort(k);}}
                     style={{padding:"8px 10px",textAlign:["name","relation_name"].includes(k)?"left":"center",
                       color:vSort===k?C.blue:C.dim,fontSize:10,textTransform:"uppercase",
-                      cursor:"pointer",userSelect:"none",whiteSpace:"nowrap"}}>
+                      cursor:k==="_edit"?"default":"pointer",userSelect:"none",whiteSpace:"nowrap"}}>
                     {lbl}{vSort===k?(vSortD==="asc"?" ↑":" ↓"):""}
                   </th>
                 ))}
@@ -2370,11 +3507,15 @@ export default function App(){
                 const ov=overrides[v._uid];
                 return(
                   <tr key={v._uid} style={{borderBottom:`1px solid ${C.bg}`,
-                    background:v.status==="Under Adjudication"?C.adj+"08":
-                               v.status==="Deleted"?C.del+"08":""}}
-                    onMouseEnter={e=>e.currentTarget.style.background=C.bg}
+                    background:v.status==="Under Adjudication"?C.adj+"1f":
+                               v.status==="Deleted"?C.del+"1f":"",
+                    borderLeft:v.status==="Under Adjudication"?`3px solid ${C.adj}`:
+                              v.status==="Deleted"?`3px solid ${C.del}`:"3px solid transparent"}}
+                    onMouseEnter={e=>e.currentTarget.style.background=
+                      v.status==="Under Adjudication"?C.adj+"28":
+                      v.status==="Deleted"?C.del+"28":C.bg}
                     onMouseLeave={e=>e.currentTarget.style.background=
-                      v.status==="Under Adjudication"?C.adj+"08":v.status==="Deleted"?C.del+"08":""}>
+                      v.status==="Under Adjudication"?C.adj+"1f":v.status==="Deleted"?C.del+"1f":""}>
                     <td style={{padding:"5px 10px",textAlign:"center",color:C.dim,fontFamily:MONO}}>{v.serial_no}</td>
                     <td style={{padding:"5px 10px",textAlign:"center",color:C.blue,fontFamily:MONO,fontWeight:700}}>{v.part_no}</td>
                     <td style={{padding:"5px 10px",color:C.dim,fontFamily:MONO,fontSize:10}}>{v.voter_id}</td>
@@ -2387,6 +3528,20 @@ export default function App(){
                       <RelBadge rel={v.religion} conf={v.relConf} via={v.relVia} override={ov}/>
                     </td>
                     <td style={{padding:"5px 10px",textAlign:"center",color:C.muted,fontSize:10}}>{v.ageGroup}</td>
+                    <td style={{padding:"5px 10px",textAlign:"center"}}>
+                      <div style={{display:"flex",gap:4,justifyContent:"center"}}>
+                        <button onClick={()=>openVoterEditor(v)}
+                          style={{padding:"2px 8px",background:"transparent",border:`1px solid ${C.border}`,
+                            borderRadius:4,color:ov?C.yellow:C.dim,fontSize:10,cursor:"pointer",fontFamily:FONT}}>
+                          {ov?"✎ "+ov:"✎ Rel"}
+                        </button>
+                        <button onClick={()=>openVoterEditor(v)}
+                          style={{padding:"2px 8px",background:"transparent",border:`1px solid ${C.border}`,
+                            borderRadius:4,color:C.blue,fontSize:10,cursor:"pointer",fontFamily:FONT}}>
+                          Edit
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 );
               })}
@@ -2526,6 +3681,14 @@ export default function App(){
             style={{flex:"1 1 180px",padding:"7px 10px",background:C.panel,
               border:`1px solid ${C.border}`,borderRadius:7,color:C.text,
               fontSize:12,fontFamily:FONT,minWidth:0}}/>
+          <button onClick={()=>exportTableImage("tblReviewQueue","review_queue_table",{
+            title:"Religion Review Queue",
+            subtitle:`Pending rows: ${queue.length}`,
+            background:normalizeHexColor(C.bg,"#ffffff"),
+          }).catch(e=>window.alert(`Export failed: ${e?.message||"unknown error"}`))}
+            style={{padding:"6px 10px",background:C.panel,border:`1px solid ${C.border}`,borderRadius:7,color:C.muted,fontSize:12,cursor:"pointer"}}>
+            Export Image
+          </button>
           {[["All","all"],["Unknown","Unknown"],["Uncertain","Uncertain"]].map(([lbl,val])=>(
             <button key={val} onClick={()=>{setRvFilter(val);setRvPage(0);}}
               style={{padding:"6px 12px",borderRadius:7,fontSize:12,cursor:"pointer",
@@ -2561,7 +3724,7 @@ export default function App(){
               :"No matches for current search/filter"}
           </div>
         ):(
-          <div style={{display:"flex",flexDirection:"column",gap:2}}>
+          <div id="tblReviewQueue" style={{display:"flex",flexDirection:"column",gap:2}}>
             {pageData.map((v,idx)=>{
               const ov=overrides[v._uid];
               const isM=ov==="Muslim";
@@ -2694,12 +3857,22 @@ export default function App(){
         <Panel>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,flexWrap:"wrap",gap:8}}>
             <SH>Same-content Files (Hash Match)</SH>
-            <button onClick={()=>exportXLSX(dupFileRows,`Duplicate_Files_${new Date().toISOString().slice(0,10)}.xlsx`,"Duplicate_Files")}
-              style={{padding:"5px 10px",background:C.green+"22",border:`1px solid ${C.green}44`,borderRadius:6,color:C.green,fontSize:11,cursor:"pointer"}}>
-              Export File Duplicates
-            </button>
+            <div style={{display:"flex",gap:6}}>
+              <button onClick={()=>exportTableImage("tblSameContentFiles","duplicate_files_table",{
+                title:"Same-content Files (Hash Match)",
+                subtitle:"Duplicate file-content groups",
+                background:normalizeHexColor(C.bg,"#ffffff"),
+              }).catch(e=>window.alert(`Export failed: ${e?.message||"unknown error"}`))}
+                style={{padding:"5px 10px",background:C.panel,border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontSize:11,cursor:"pointer"}}>
+                Export Image
+              </button>
+              <button onClick={()=>exportXLSX(dupFileRows,`Duplicate_Files_${new Date().toISOString().slice(0,10)}.xlsx`,"Duplicate_Files")}
+                style={{padding:"5px 10px",background:C.green+"22",border:`1px solid ${C.green}44`,borderRadius:6,color:C.green,fontSize:11,cursor:"pointer"}}>
+                Export File Duplicates
+              </button>
+            </div>
           </div>
-          <div style={{overflowX:"auto"}}>
+          <div id="tblSameContentFiles" style={{overflowX:"auto"}}>
             <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,minWidth:720}}>
               <thead><tr style={{borderBottom:`1px solid ${C.border}`}}>
                 {["Hash (short)","Count","Files","Rows per File"].map(h=>(
@@ -2726,18 +3899,28 @@ export default function App(){
         <Panel>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,flexWrap:"wrap",gap:8}}>
             <SH>Duplicate Voter Rows (Part + Voter ID / fallback key)</SH>
-            <button onClick={()=>{
-              const rows=duplicateGroups.flatMap(g=>g.rows.map(v=>({
-                "Duplicate Key":g.key,"Group Size":g.count,"Part":v.part_no,"Serial":v.serial_no,"Voter ID":v.voter_id,
-                "Name":v.name,"Relation":v.relation_name,"Age":v.age,"Gender":v.gender,"Status":v.status,"Source File":v.sourceFile
-              })));
-              exportXLSX(rows,`Duplicate_Rows_${new Date().toISOString().slice(0,10)}.xlsx`,"Duplicate_Rows");
-            }}
-              style={{padding:"5px 10px",background:C.blue+"22",border:`1px solid ${C.blue}44`,borderRadius:6,color:C.blue,fontSize:11,cursor:"pointer"}}>
-              Export Row Duplicates
-            </button>
+            <div style={{display:"flex",gap:6}}>
+              <button onClick={()=>exportTableImage("tblDuplicateVoters","duplicate_voter_rows_table",{
+                title:"Duplicate Voter Rows",
+                subtitle:"Part + voter key duplicates",
+                background:normalizeHexColor(C.bg,"#ffffff"),
+              }).catch(e=>window.alert(`Export failed: ${e?.message||"unknown error"}`))}
+                style={{padding:"5px 10px",background:C.panel,border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontSize:11,cursor:"pointer"}}>
+                Export Image
+              </button>
+              <button onClick={()=>{
+                const rows=duplicateGroups.flatMap(g=>g.rows.map(v=>({
+                  "Duplicate Key":g.key,"Group Size":g.count,"Part":v.part_no,"Serial":v.serial_no,"Voter ID":v.voter_id,
+                  "Name":v.name,"Relation":v.relation_name,"Age":v.age,"Gender":v.gender,"Status":v.status,"Source File":v.sourceFile
+                })));
+                exportXLSX(rows,`Duplicate_Rows_${new Date().toISOString().slice(0,10)}.xlsx`,"Duplicate_Rows");
+              }}
+                style={{padding:"5px 10px",background:C.blue+"22",border:`1px solid ${C.blue}44`,borderRadius:6,color:C.blue,fontSize:11,cursor:"pointer"}}>
+                Export Row Duplicates
+              </button>
+            </div>
           </div>
-          <div style={{maxHeight:280,overflow:"auto"}}>
+          <div id="tblDuplicateVoters" style={{maxHeight:280,overflow:"auto"}}>
             <table style={{width:"100%",borderCollapse:"collapse",fontSize:11,minWidth:800}}>
               <thead style={{position:"sticky",top:0,background:C.panel}}>
                 <tr style={{borderBottom:`1px solid ${C.border}`}}>
@@ -3396,7 +4579,7 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
   );
 
   // ── Render ──────────────────────────────────────────────────────────────────
-  if(!voters.length&&!loading) return <UploadScreen onFiles={loadFiles} loading={loading}/>;
+  if(!voters.length&&!loading) return <UploadScreen onFiles={loadFiles} loading={loading} theme={theme} setTheme={setTheme}/>;
 
   const TABS=[
     {id:"overview",label:"Overview"},
@@ -3433,6 +4616,11 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
               borderRadius:5,color:C.muted,fontSize:11,cursor:"pointer"}}>
             {theme==="dark"?"☀ Light":"🌙 Dark"}
           </button>
+          <button onClick={()=>setChartStudioOpen(true)}
+            style={{padding:"4px 10px",background:C.panel,border:`1px solid ${C.border}`,
+              borderRadius:5,color:C.muted,fontSize:11,cursor:"pointer"}}>
+            Chart Studio
+          </button>
           {Object.keys(overrides).length>0&&!mobile&&(
             <span style={{fontSize:11,color:C.yellow,fontFamily:MONO}}>
               ✎ {Object.keys(overrides).length}
@@ -3454,6 +4642,16 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
               opacity:reportBusy?0.6:1}}>
             {reportBusy?"Exporting…":"Export Report Pack"}
           </button>
+          <button onClick={exportSessionPack}
+            style={{padding:"4px 10px",background:C.panel,border:`1px solid ${C.border}`,
+              borderRadius:5,color:C.muted,fontSize:11,cursor:"pointer",fontWeight:600}}>
+            Export Session
+          </button>
+          <button onClick={()=>sessionFileRef.current?.click()}
+            style={{padding:"4px 10px",background:C.panel,border:`1px solid ${C.border}`,
+              borderRadius:5,color:C.muted,fontSize:11,cursor:"pointer",fontWeight:600}}>
+            Import Session
+          </button>
           <button onClick={()=>fileRef.current?.click()}
             style={{padding:"4px 10px",background:C.blue+"22",border:`1px solid ${C.blue}44`,
               borderRadius:5,color:C.blue,fontSize:11,cursor:"pointer",fontWeight:600}}>
@@ -3470,7 +4668,9 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
             Reset
           </button>
           <input ref={fileRef} type="file" accept=".xlsx" multiple style={{display:"none"}}
-            onChange={e=>loadFiles(Array.from(e.target.files))}/>
+            onChange={e=>{ loadFiles(Array.from(e.target.files||[])); e.target.value=""; }}/>
+          <input ref={sessionFileRef} type="file" accept=".eimpack,.json,.xlsx" style={{display:"none"}}
+            onChange={e=>handleImportSessionFile(e.target.files?.[0])}/>
         </div>
       </div>
 
@@ -3481,13 +4681,14 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
           <div style={{width:"min(520px,94vw)",background:C.panel,
             border:`1px solid ${C.orange}66`,borderRadius:12,padding:24}}>
             <div style={{fontSize:15,fontWeight:800,color:C.text,marginBottom:6}}>
-              ⚠ File Already Loaded
+              ⚠ Duplicate Roll Detected
             </div>
             <div style={{fontSize:13,color:C.muted,marginBottom:14,lineHeight:1.6}}>
-              The following file{replaceModal.conflicting.length>1?"s are":"is"} already in the dataset:
+              {replaceModal.conflicting?.length>0&&`Some files already exist by filename.`}
+              {replaceModal.contentConflicts?.length>0&&`${replaceModal.conflicting?.length>0?" ":""}Some files have duplicate content hash with already loaded rolls.`}
             </div>
             <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:18}}>
-              {replaceModal.conflicting.map(f=>(
+              {(replaceModal.conflicting||[]).map(f=>(
                 <div key={f.name} style={{display:"flex",alignItems:"center",gap:10,
                   padding:"8px 12px",background:C.bg,borderRadius:8,
                   border:`1px solid ${C.orange}44`}}>
@@ -3502,7 +4703,25 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
                   </div>
                   <span style={{fontSize:11,padding:"2px 8px",background:C.orange+"22",
                     border:`1px solid ${C.orange}44`,borderRadius:4,color:C.orange,fontWeight:700}}>
-                    LOADED
+                    NAME MATCH
+                  </span>
+                </div>
+              ))}
+              {(replaceModal.contentConflicts||[]).map(x=>(
+                <div key={`${x.file.name}_${x.existingName}`} style={{display:"flex",alignItems:"center",gap:10,
+                  padding:"8px 12px",background:C.bg,borderRadius:8,border:`1px solid ${C.yellow}44`}}>
+                  <span style={{fontSize:18}}>🧬</span>
+                  <div style={{flex:1}}>
+                    <div style={{fontFamily:MONO,fontSize:12,color:C.text,fontWeight:700}}>
+                      {x.file.name} ↔ {x.existingName}
+                    </div>
+                    <div style={{fontSize:11,color:C.dim}}>
+                      Same file content hash detected
+                    </div>
+                  </div>
+                  <span style={{fontSize:11,padding:"2px 8px",background:C.yellow+"22",
+                    border:`1px solid ${C.yellow}44`,borderRadius:4,color:C.yellow,fontWeight:700}}>
+                    CONTENT DUP
                   </span>
                 </div>
               ))}
@@ -3516,9 +4735,9 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
             )}
             <div style={{fontSize:12,color:C.muted,marginBottom:18,
               padding:"10px 14px",background:C.bg,borderRadius:8,lineHeight:1.6}}>
-              <b style={{color:C.text}}>Replace</b> — removes all existing rows from this file and reloads fresh.<br/>
+              <b style={{color:C.text}}>Replace Existing</b> — removes previously loaded duplicate roll(s) and loads new file(s).<br/>
               <b style={{color:C.text}}>Add Anyway</b> — appends on top (may create duplicates).<br/>
-              <b style={{color:C.text}}>Skip Existing</b> — loads only the new file{replaceModal.newOnly.length!==1?"s":""}, ignores the duplicate.
+              <b style={{color:C.text}}>Discard Duplicates</b> — loads only non-duplicate file{replaceModal.newOnly.length!==1?"s":""}.
             </div>
             <div style={{display:"flex",gap:8,justifyContent:"flex-end",flexWrap:"wrap"}}>
               <button onClick={()=>setReplaceModal(null)}
@@ -3534,7 +4753,7 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
                 }} style={{padding:"7px 16px",background:C.blue+"22",
                   border:`1px solid ${C.blue}44`,borderRadius:7,
                   color:C.blue,fontSize:13,cursor:"pointer",fontWeight:600}}>
-                  Skip Existing
+                  Discard Duplicates
                 </button>
               )}
               <button onClick={async()=>{
@@ -3547,11 +4766,14 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
               </button>
               <button onClick={async()=>{
                 const m=replaceModal; setReplaceModal(null);
-                await doLoadFiles(m.all,new Set(m.conflicting.map(f=>f.name)));
+                await doLoadFiles(m.all,new Set([
+                  ...(m.conflicting||[]).map(f=>f.name),
+                  ...(m.contentConflicts||[]).map(x=>x.existingName),
+                ]));
               }} style={{padding:"7px 16px",background:C.adj+"22",
                 border:`1px solid ${C.adj}44`,borderRadius:7,
                 color:C.adj,fontSize:13,cursor:"pointer",fontWeight:700}}>
-                Replace
+                Replace Existing
               </button>
             </div>
           </div>
@@ -3640,6 +4862,59 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
         );
       })()}
 
+      {voterEditModal&&(
+        <div style={{position:"fixed",inset:0,background:"#00000088",zIndex:79,display:"flex",alignItems:"center",justifyContent:"center",padding:12}}>
+          <div style={{width:"min(760px,96vw)",background:C.panel,border:`1px solid ${C.border}`,borderRadius:10,padding:14}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+              <div style={{fontSize:14,fontWeight:700,color:C.text}}>Edit Voter Data (OCR correction)</div>
+              <button onClick={()=>setVoterEditModal(null)} style={{padding:"4px 8px",background:"transparent",border:`1px solid ${C.border}`,borderRadius:6,color:C.dim,cursor:"pointer"}}>Close</button>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:8}}>
+              {[
+                ["name","Name"],["relation_name","Relative Name"],["age","Age"],["gender","Gender"],
+                ["voter_id","Voter ID"],["serial_no","Serial No"],["house_no","House No"],["page_no","Page No"],
+              ].map(([k,l])=>(
+                <div key={k}>
+                  <div style={{fontSize:11,color:C.dim,marginBottom:4}}>{l}</div>
+                  <input value={voterEditModal?.draft?.[k]??""}
+                    onChange={e=>setVoterEditModal(m=>({...m,draft:{...m.draft,[k]:e.target.value}}))}
+                    style={{width:"100%",padding:"6px 8px",border:`1px solid ${C.border}`,borderRadius:6,background:C.bg,color:C.text,fontSize:12,boxSizing:"border-box"}}/>
+                </div>
+              ))}
+              <div>
+                <div style={{fontSize:11,color:C.dim,marginBottom:4}}>Status</div>
+                <select value={voterEditModal?.draft?.status||"Active"}
+                  onChange={e=>setVoterEditModal(m=>({...m,draft:{...m.draft,status:e.target.value}}))}
+                  style={{width:"100%",padding:"6px 8px",border:`1px solid ${C.border}`,borderRadius:6,background:C.bg,color:C.text,fontSize:12,boxSizing:"border-box"}}>
+                  <option value="Active">Active</option>
+                  <option value="Under Adjudication">Under Adjudication</option>
+                  <option value="Deleted">Deleted</option>
+                </select>
+              </div>
+              <div>
+                <div style={{fontSize:11,color:C.dim,marginBottom:4}}>Religion Override</div>
+                <select value={voterEditModal?.draft?.religion_override||""}
+                  onChange={e=>setVoterEditModal(m=>({...m,draft:{...m.draft,religion_override:e.target.value}}))}
+                  style={{width:"100%",padding:"6px 8px",border:`1px solid ${C.border}`,borderRadius:6,background:C.bg,color:C.text,fontSize:12,boxSizing:"border-box"}}>
+                  <option value="">Auto (classifier)</option>
+                  <option value="Muslim">Muslim</option>
+                  <option value="Hindu">Hindu</option>
+                  <option value="Uncertain">Uncertain</option>
+                  <option value="Unknown">Unknown</option>
+                </select>
+              </div>
+            </div>
+            <div style={{marginTop:10,fontSize:11,color:C.dim}}>
+              Save will re-run religion detection using both elector and relative name, and refresh status/age-group fields.
+            </div>
+            <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:12}}>
+              <button onClick={()=>setVoterEditModal(null)} style={{padding:"6px 10px",background:"transparent",border:`1px solid ${C.border}`,borderRadius:6,color:C.dim,cursor:"pointer"}}>Cancel</button>
+              <button onClick={saveVoterEdit} style={{padding:"6px 12px",background:C.blue+"22",border:`1px solid ${C.blue}44`,borderRadius:6,color:C.blue,cursor:"pointer",fontWeight:700}}>Save</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* File warnings banner */}
       {fileWarnings.length>0&&(
         <div style={{background:"#1a0a00",borderBottom:`1px solid ${C.orange}44`,padding:"8px 20px"}}>
@@ -3676,6 +4951,9 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
                 <div style={{fontSize:11,color:C.dim,fontFamily:MONO}}>
                   {uploadSummary.files} file(s) · {uploadSummary.parts} parts · {uploadSummary.loaded.toLocaleString()} voters
                 </div>
+                <div style={{fontSize:11,color:C.dim,fontFamily:MONO,marginTop:2}}>
+                  AC: {uploadSummary.acCoverage||"Not detected"}
+                </div>
               </div>
               <button onClick={()=>setUploadSummary(null)}
                 style={{padding:"4px 10px",background:"transparent",border:`1px solid ${C.border}`,
@@ -3697,15 +4975,17 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
               <table style={{width:"100%",borderCollapse:"collapse",minWidth:820,fontSize:11}}>
                 <thead style={{background:C.bg}}>
                   <tr style={{borderBottom:`1px solid ${C.border}`}}>
-                    {["Part","Total","Active","UA","Deleted","Muslim","Hindu","Uncertain","Unknown","<45","45+","Review","Dup"].map(h=>(
-                      <th key={h} style={{padding:"7px 8px",textAlign:h==="Part"?"left":"right",
+                    {["AC No","AC Name","Part","Total","Active","UA","Deleted","Muslim","Hindu","Uncertain","Unknown","<45","45+","Review","Dup"].map(h=>(
+                      <th key={h} style={{padding:"7px 8px",textAlign:["AC No","AC Name","Part"].includes(h)?"left":"right",
                         color:C.dim,fontSize:10,fontWeight:700,textTransform:"uppercase"}}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {uploadSummary.partRows.map(r=>(
-                    <tr key={r.part} style={{borderBottom:`1px solid ${C.border}22`}}>
+                    <tr key={`${r.acNo||"?"}_${r.part}`} style={{borderBottom:`1px solid ${C.border}22`}}>
+                      <td style={{padding:"6px 8px",color:C.muted,fontFamily:MONO}}>{r.acNo||"—"}</td>
+                      <td style={{padding:"6px 8px",color:C.muted,maxWidth:220,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={r.acName||""}>{r.acName||"—"}</td>
                       <td style={{padding:"6px 8px",color:C.blue,fontFamily:MONO,fontWeight:700}}>P{r.part}</td>
                       <td style={{padding:"6px 8px",textAlign:"right",color:C.muted}}>{r.total}</td>
                       <td style={{padding:"6px 8px",textAlign:"right",color:C.active}}>{r.active}</td>
@@ -3737,7 +5017,7 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
                 <button
                   onClick={()=>{
                     const rows=uploadSummary.partRows.map(r=>({
-                      Part:r.part,Total:r.total,Active:r.active,"Under Adjudication":r.adj,Deleted:r.del,
+                      "AC No":r.acNo||"","AC Name":r.acName||"",Part:r.part,Total:r.total,Active:r.active,"Under Adjudication":r.adj,Deleted:r.del,
                       Muslim:r.muslim,Hindu:r.hindu,Uncertain:r.uncertain,Unknown:r.unknown,
                       "<45":r.below45,"45+":r.age45Plus,Review:r.review,Duplicates:r.duplicates||0,
                     }));
@@ -3760,6 +5040,62 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
                   Continue
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {chartStudioOpen&&(
+        <div style={{position:"fixed",inset:0,background:"#00000066",zIndex:74,display:"flex",alignItems:"center",justifyContent:"center",padding:12}}>
+          <div style={{width:"min(760px,96vw)",maxHeight:"90vh",overflow:"auto",background:C.panel,border:`1px solid ${C.border}`,borderRadius:10,padding:14}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+              <div style={{fontSize:14,fontWeight:700,color:C.text}}>Chart Studio</div>
+              <button onClick={()=>setChartStudioOpen(false)} style={{padding:"4px 8px",background:"transparent",border:`1px solid ${C.border}`,borderRadius:6,color:C.dim,cursor:"pointer"}}>Close</button>
+            </div>
+            <div style={{fontSize:11,color:C.dim,marginBottom:8}}>
+              Controls below affect chart preview and chart exports.
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))",gap:8}}>
+              <label style={{fontSize:12,color:C.text,display:"flex",alignItems:"center",gap:6}}>
+                <input type="checkbox" checked={!!chartPrefs.showLegend}
+                  onChange={e=>setChartPrefs(p=>({...p,showLegend:e.target.checked}))}/> Show legend
+              </label>
+              <label style={{fontSize:12,color:C.text,display:"flex",alignItems:"center",gap:6}}>
+                <input type="checkbox" checked={!!chartPrefs.showValueLabels}
+                  onChange={e=>setChartPrefs(p=>({...p,showValueLabels:e.target.checked}))}/> Show value labels
+              </label>
+              <div>
+                <div style={{fontSize:11,color:C.dim,marginBottom:4}}>Value label position</div>
+                <select value={chartPrefs.valueLabelPos}
+                  onChange={e=>setChartPrefs(p=>({...p,valueLabelPos:e.target.value}))}
+                  style={{width:"100%",padding:"6px 8px",border:`1px solid ${C.border}`,borderRadius:6,background:C.bg,color:C.text,fontSize:12}}>
+                  <option value="top">Top</option>
+                  <option value="inside">Inside</option>
+                  <option value="right">Right</option>
+                </select>
+              </div>
+              <div>
+                <div style={{fontSize:11,color:C.dim,marginBottom:4}}>X-axis label</div>
+                <input value={chartPrefs.xAxisLabel||""}
+                  onChange={e=>setChartPrefs(p=>({...p,xAxisLabel:e.target.value}))}
+                  style={{width:"100%",padding:"6px 8px",border:`1px solid ${C.border}`,borderRadius:6,background:C.bg,color:C.text,fontSize:12,boxSizing:"border-box"}}/>
+              </div>
+              <div>
+                <div style={{fontSize:11,color:C.dim,marginBottom:4}}>Y-axis label</div>
+                <input value={chartPrefs.yAxisLabel||""}
+                  onChange={e=>setChartPrefs(p=>({...p,yAxisLabel:e.target.value}))}
+                  style={{width:"100%",padding:"6px 8px",border:`1px solid ${C.border}`,borderRadius:6,background:C.bg,color:C.text,fontSize:12,boxSizing:"border-box"}}/>
+              </div>
+              {[
+                ["activeColor","Active"],["underAdjColor","Under Adj"],["deletedColor","Deleted"],["muslimColor","Muslim"],["hinduColor","Hindu"],
+              ].map(([k,label])=>(
+                <div key={k}>
+                  <div style={{fontSize:11,color:C.dim,marginBottom:4}}>{label} color</div>
+                  <input type="color" value={normalizeHexColor(chartPrefs[k],"#3b82f6")}
+                    onChange={e=>setChartPrefs(p=>({...p,[k]:normalizeHexColor(e.target.value,"#3b82f6")}))}
+                    style={{width:"100%",height:34,padding:0,border:`1px solid ${C.border}`,borderRadius:6,background:C.bg}}/>
+                </div>
+              ))}
             </div>
           </div>
         </div>
@@ -3789,6 +5125,24 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
                   <option value="csv">CSV (chart data)</option>
                 </select>
               </div>
+              <div style={{gridColumn:"1 / -1"}}>
+                <div style={{fontSize:11,color:C.dim,marginBottom:4}}>Title</div>
+                <input value={chartExportModal.title||""}
+                  onChange={e=>setChartExportModal(m=>({...m,title:e.target.value}))}
+                  style={{width:"100%",padding:"6px 8px",border:`1px solid ${C.border}`,borderRadius:6,background:C.bg,color:C.text,fontSize:12,boxSizing:"border-box"}}/>
+              </div>
+              <div style={{gridColumn:"1 / -1"}}>
+                <div style={{fontSize:11,color:C.dim,marginBottom:4}}>Subtitle</div>
+                <input value={chartExportModal.subtitle||""}
+                  onChange={e=>setChartExportModal(m=>({...m,subtitle:e.target.value}))}
+                  style={{width:"100%",padding:"6px 8px",border:`1px solid ${C.border}`,borderRadius:6,background:C.bg,color:C.text,fontSize:12,boxSizing:"border-box"}}/>
+              </div>
+              <div style={{gridColumn:"1 / -1"}}>
+                <div style={{fontSize:11,color:C.dim,marginBottom:4}}>Footnote</div>
+                <input value={chartExportModal.note||""}
+                  onChange={e=>setChartExportModal(m=>({...m,note:e.target.value}))}
+                  style={{width:"100%",padding:"6px 8px",border:`1px solid ${C.border}`,borderRadius:6,background:C.bg,color:C.text,fontSize:12,boxSizing:"border-box"}}/>
+              </div>
               {chartExportModal.format!=="csv"&&(
                 <>
                   <div>
@@ -3815,6 +5169,11 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
                       onChange={e=>setChartExportModal(m=>({...m,background:normalizeHexColor(e.target.value,normalizeHexColor(C.bg,"#ffffff"))}))}
                       style={{width:"100%",height:34,padding:0,border:`1px solid ${C.border}`,borderRadius:6,background:C.bg}}/>
                   </div>
+                  <label style={{gridColumn:"1 / -1",fontSize:12,color:C.text,display:"flex",alignItems:"center",gap:6}}>
+                    <input type="checkbox" checked={!!chartExportModal.includeTimestamp}
+                      onChange={e=>setChartExportModal(m=>({...m,includeTimestamp:e.target.checked}))}/>
+                    Include export timestamp in chart header
+                  </label>
                 </>
               )}
             </div>
@@ -3862,7 +5221,7 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
       />
 
       {/* Content */}
-      <div style={{padding:mobile?"10px 8px":tablet?"14px 16px":"20px 24px"}}>
+      <div id="tabContentRoot" style={{padding:mobile?"10px 8px":tablet?"14px 16px":"20px 24px"}}>
         {loading&&<div style={{textAlign:"center",padding:40,color:C.blue,fontFamily:MONO}}>Processing files…</div>}
         {tab==="overview"&&renderOverview()}
         {tab==="religion"&&renderReligion()}
