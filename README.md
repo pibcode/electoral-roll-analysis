@@ -8,6 +8,7 @@ It helps you:
 - review uncertain classifications
 - run statistical comparisons
 - export reports, charts, and data
+- include `AC No`, `AC Name`, and `Part Number` in publication-ready reports
 
 ---
 
@@ -131,9 +132,36 @@ Optional columns:
 - `page_no`
 - `relation_type`
 
+Important:
+- For proper constituency-level reporting, include:
+  - `ac_no`
+  - `ac_name`
+  - `part_no`
+- Report exports now show these identifiers in:
+  - Overview sheet
+  - Part summary sheet
+  - Duplicate rows sheet
+  - All voters sheet
+  - Printable report header
+
 ---
 
-## 6. Common Problems and Fixes
+## 6. What the One-Click Report Exports
+
+When you use report export, the Excel workbook contains:
+
+- `Overview`
+- `Part_Summary`
+- `Anomalies`
+- `Duplicates`
+- `File_Duplicates`
+- `All_Voters`
+
+Charts are also exported as images, and a printable summary opens in a new tab.
+
+---
+
+## 7. Common Problems and Fixes
 
 ## Problem: App not opening
 
@@ -166,9 +194,8 @@ Use Node 18+.
 
 ---
 
-## 7. Notes
+## 8. Notes
 
 - This app runs fully in browser by default.
 - Your files are processed locally unless you connect external services.
 - Use exported reports responsibly and verify conclusions with domain experts.
-

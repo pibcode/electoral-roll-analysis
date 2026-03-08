@@ -138,21 +138,6 @@ function uid(){
   }catch{}
   return `uid_${Date.now()}_${Math.random().toString(36).slice(2,10)}`;
 }
-function tintHex(hex, factor=0){
-  const h=normalizeHexColor(hex,"#888888");
-  const n=(x)=>parseInt(x,16);
-  let r=n(h.slice(1,3)), g=n(h.slice(3,5)), b=n(h.slice(5,7));
-  if(factor>0){
-    r=Math.round(r+(255-r)*factor);
-    g=Math.round(g+(255-g)*factor);
-    b=Math.round(b+(255-b)*factor);
-  }else if(factor<0){
-    const f=1+factor;
-    r=Math.round(r*f); g=Math.round(g*f); b=Math.round(b*f);
-  }
-  const toHex=(v)=>Math.max(0,Math.min(255,v)).toString(16).padStart(2,"0");
-  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
-}
 
 // ── Colours & theme ──────────────────────────────────────────────────────────
 const THEME_DARK = {
@@ -163,12 +148,11 @@ const THEME_DARK = {
   adj:"#ef4444", del:"#be123c", active:"#2563eb",
 };
 const THEME_LIGHT = {
-  // Semi-light mode: still bright, but with stronger contrast and color depth.
-  bg:"#eaf1fb", panel:"#f7fbff", border:"#b7c9e4", text:"#0b2340",
-  muted:"#35506f", dim:"#5f7a99", blue:"#2459d3", red:"#c62828",
-  orange:"#d97706", green:"#159947", yellow:"#d4a40f",
-  Muslim:"#0f8f6f", Hindu:"#c43d3d", Uncertain:"#c28b0a", Unknown:"#5b6f86",
-  adj:"#d83b3b", del:"#9d174d", active:"#2c63db",
+  bg:"#f7fafc", panel:"#ffffff", border:"#d9e2ec", text:"#102a43",
+  muted:"#486581", dim:"#829ab1", blue:"#1d4ed8", red:"#c81e1e",
+  orange:"#f97316", green:"#22c55e", yellow:"#fbbf24",
+  Muslim:"#0f766e", Hindu:"#b91c1c", Uncertain:"#b45309", Unknown:"#64748b",
+  adj:"#dc2626", del:"#9f1239", active:"#2563eb",
 };
 const C = { ...THEME_DARK };
 const FONT="'Inter','Segoe UI',sans-serif";
@@ -282,9 +266,6 @@ const EXPORT_REGISTRY = [
   { kind:"chart", tabId:"age", containerId:"chartAgeStatus", filename:"age_group_status", title:"Age Group x Status", subtitle:"Status distribution by age cohort", chartType:"Grouped bars" },
   { kind:"chart", tabId:"age", containerId:"chartAgeTrend", filename:"age_cohort_trend", title:"Age Cohort Trends", subtitle:"Adj% trend by age", chartType:"Line chart" },
   { kind:"chart", tabId:"custom", containerId:"chartCustomAnalytics", filename:"custom_analytics", title:"Custom Analytics", subtitle:"Configurable analytics chart", chartType:"Configurable" },
-  { kind:"chart", tabId:"trends", containerId:"chartPartPopulationBundle", filename:"part_population_composition", title:"Part Population Composition", subtitle:"Religion and status stacked by part", chartType:"Synchronized stacked bars" },
-  { kind:"chart", tabId:"trends", containerId:"chartPartTripleBars", filename:"part_triple_stacked", title:"Part Triple Stacked Bars", subtitle:"Population/UA/Deleted by dimension", chartType:"Triple synchronized stacked bars" },
-  { kind:"chart", tabId:"trends", containerId:"chartPartDonutGrid", filename:"part_targeting_donuts", title:"Part-wise Targeting Donuts", subtitle:"Muslim/Hindu split with status shades", chartType:"Donut small multiples" },
   { kind:"chart", tabId:"trends", containerId:"chartPartTrends", filename:"part_trend_decomposition", title:"Part Trend Decomposition", subtitle:"Per-part trend lines", chartType:"Trend lines" },
   { kind:"table", tabId:"religion", containerId:"tblReligionCrosstab", filename:"religion_status_crosstab", title:"Religion x Status Cross-tabulation", subtitle:"Tabular summary" },
   { kind:"table", tabId:"age", containerId:"tblAgeReligionAdj", filename:"age_religion_adjudication_table", title:"Age x Religion x Adjudication Rate", subtitle:"Tabular summary" },
@@ -487,13 +468,11 @@ const TT={contentStyle:{background:C.bg,border:`1px solid ${C.border}`,borderRad
 // ── Status badge ─────────────────────────────────────────────────────────────
 const StatusBadge=({s})=>{
   const cfg={
-    "Under Adjudication":{c:C.adj, bg:C.adj+"30", label:"UA"},
-    "Deleted":{c:C.del, bg:C.del+"30", label:"DEL"},
-    "Active":{c:C.active, bg:C.active+"22", label:"OK"},
+    "Under Adjudication":{c:C.adj, bg:C.adj+"22", label:"UA"},
+    "Deleted":{c:C.del, bg:C.del+"22", label:"DEL"},
+    "Active":{c:"#60a5fa", bg:"#3b82f622", label:"OK"},
   }[s]||{c:C.dim, bg:"#ffffff11", label:s};
-  return <span style={{display:"inline-flex",alignItems:"center",gap:4,padding:"2px 8px",
-    borderRadius:6,border:`1px solid ${cfg.c}55`,background:cfg.bg,color:cfg.c,
-    fontSize:10,fontWeight:800,fontFamily:MONO,letterSpacing:0.2}}>{cfg.label}</span>;
+  return <Tag c={cfg.label} color={cfg.c} bg={cfg.bg}/>;
 };
 
 // ── Religion badge ────────────────────────────────────────────────────────────
@@ -700,19 +679,12 @@ function FilterBar({gSearch,setGSearch,gPart,setGPart,gStatus,setGStatus,
 }
 
 // ══ UPLOAD SCREEN ════════════════════════════════════════════════════════════
-function UploadScreen({onFiles,loading,theme,setTheme}){
+function UploadScreen({onFiles,loading}){
   const ref=useRef();
   return(
     <div style={{minHeight:"100vh",background:C.bg,color:C.text,fontFamily:FONT,
       display:"flex",alignItems:"center",justifyContent:"center"}}>
-      <div style={{maxWidth:700,width:"100%",padding:"0 24px",position:"relative"}}>
-        <div style={{position:"absolute",right:24,top:-54}}>
-          <button onClick={()=>setTheme(t=>t==="dark"?"light":"dark")}
-            style={{padding:"6px 12px",background:C.panel,border:`1px solid ${C.border}`,
-              borderRadius:7,color:C.muted,fontSize:12,cursor:"pointer",fontFamily:FONT}}>
-            {theme==="dark"?"☀ Light":"🌙 Dark"}
-          </button>
-        </div>
+      <div style={{maxWidth:700,width:"100%",padding:"0 24px"}}>
         <div style={{textAlign:"center",marginBottom:36}}>
           <div style={{fontSize:10,letterSpacing:5,color:C.dim,marginBottom:10,
             textTransform:"uppercase",fontFamily:MONO}}>Electoral Integrity Monitor · v1.0</div>
@@ -736,7 +708,7 @@ function UploadScreen({onFiles,loading,theme,setTheme}){
           <p style={{fontSize:12,color:C.dim}}>Multiple .xlsx files · All parts of any AC · Supports 300+ booths</p>
           <p style={{fontSize:11,color:C.dim,marginTop:6}}>🔒 Fully local — no data sent to any server</p>
           <input ref={ref} type="file" accept=".xlsx" multiple style={{display:"none"}}
-            onChange={e=>{ onFiles(Array.from(e.target.files||[])); e.target.value=""; }}/>
+            onChange={e=>onFiles(Array.from(e.target.files))}/>
         </div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:10,marginTop:24}}>
           {[
@@ -745,7 +717,7 @@ function UploadScreen({onFiles,loading,theme,setTheme}){
             ["🧾 Duplicate Detection", "Row-level duplicates · same-content file hash detection"],
             ["📦 Reporting", "One-click export pack (XLSX + charts + printable report)"],
           ].map(([t,d])=>(
-            <div key={t} style={{padding:14,background:C.panel,borderRadius:8,border:`1px solid ${C.border}`}}>
+            <div key={t} style={{padding:14,background:"#0d1526",borderRadius:8,border:`1px solid ${C.border}`}}>
               <div style={{fontWeight:700,color:C.text,marginBottom:4,fontSize:13}}>{t}</div>
               <div style={{color:C.dim,fontSize:11,lineHeight:1.6}}>{d}</div>
             </div>
@@ -793,14 +765,6 @@ export default function App(){
   const [caCompare,setCaCompare]=useState("all");
   const [caMode,setCaMode]=useState("grouped");
   const [caStackBy,setCaStackBy]=useState("status");
-  const [partVizMode,setPartVizMode]=useState("count"); // count | share
-  const [partVizHeight,setPartVizHeight]=useState(240);
-  const [partVizSyncY,setPartVizSyncY]=useState(true);
-  const [donutPage,setDonutPage]=useState(0);
-  const [donutPerPage,setDonutPerPage]=useState(8);
-  const [partTripleDim,setPartTripleDim]=useState("religion"); // religion | age
-  const [partTripleMode,setPartTripleMode]=useState("absolute"); // absolute | share
-  const [partTripleHeight,setPartTripleHeight]=useState(220);
 
   // Voter list state
   const [vPage,setVPage]=useState(0);
@@ -1108,17 +1072,12 @@ export default function App(){
           continue;
         }
         const wb=XLSX.read(buf,{type:"array"});
-        const preferred=wb.Sheets["Voter Roll"]?"Voter Roll":(wb.SheetNames?.[0]||null);
-        if(!preferred){
+        if(!wb.Sheets["Voter Roll"]){
           newWarnings.push({file:file.name,type:"error",
-            msg:`No readable sheet found in workbook`});
+            msg:`Missing "Voter Roll" sheet. Found sheets: ${wb.SheetNames.join(", ")}`});
           continue;
         }
-        if(preferred!=="Voter Roll"){
-          newWarnings.push({file:file.name,type:"warn",
-            msg:`"Voter Roll" sheet not found; using first sheet "${preferred}"`});
-        }
-        const ws=wb.Sheets[preferred];
+        const ws=wb.Sheets["Voter Roll"];
         const rows=XLSX.utils.sheet_to_json(ws,{defval:""});
         if(!rows.length){
           newWarnings.push({file:file.name,type:"error",msg:"Sheet is empty"});
@@ -1302,35 +1261,17 @@ export default function App(){
           isReplace:replaceNames.size>0,
         });
       }
-      if(!all.length && !baseVoters.length){
-        const errs=newWarnings.filter(w=>w.type==="error").slice(0,3).map(w=>`• ${w.file}: ${w.msg}`);
-        const warns=newWarnings.filter(w=>w.type==="warn").slice(0,2).map(w=>`• ${w.file}: ${w.msg}`);
-        const msg=[
-          "No voter rows were loaded from the selected file(s).",
-          errs.length?`Errors:\n${errs.join("\n")}`:"",
-          warns.length?`Warnings:\n${warns.join("\n")}`:"",
-          "Check column mapping and sheet contents, then try again.",
-        ].filter(Boolean).join("\n\n");
-        window.alert(msg);
-      }
       const allMergedParts=[...new Set(merged.map(v=>v.part_no))].sort((a,b)=>+a-+b);
       if(allMergedParts.length&&boothPart===null) setBoothPart(allMergedParts[0]);
     }catch(e){
       setFileWarnings(prev=>[...prev,{file:"unknown",type:"error",msg:e.message}]);
-      window.alert(`Upload failed: ${e?.message||"unknown error"}`);
     }
     setLoading(false);
   },[boothPart,voters,effectiveScores,loadedFileMeta]);
 
   // ── Public loadFiles: checks registry first, shows replace/cancel if needed ──
   const loadFiles=useCallback(async(files)=>{
-    if(!Array.isArray(files) || !files.length) return;
-    const xlsxFiles=files.filter(f=>String(f?.name||"").toLowerCase().endsWith(".xlsx"));
-    if(!xlsxFiles.length){
-      window.alert("Please select one or more .xlsx files.");
-      return;
-    }
-    const byName=xlsxFiles.filter(f=>f.name in loadedFiles);
+    const byName=files.filter(f=>f.name in loadedFiles);
     const byContent=[];
     const seenRaw=new Map();
     const existingRawToName=new Map(
@@ -1338,7 +1279,7 @@ export default function App(){
         .map(([name,m])=>[m?.rawHash,name])
         .filter(([h])=>!!h)
     );
-    for(const f of xlsxFiles){
+    for(const f of files){
       if(byName.some(x=>x.name===f.name)) continue;
       const buf=await f.arrayBuffer();
       const raw=await sha256HexArrayBuffer(buf);
@@ -1352,12 +1293,12 @@ export default function App(){
       ...byName.map(f=>f.name),
       ...byContent.map(x=>x.file.name),
     ]);
-    const newOnly=xlsxFiles.filter(f=>!conflictNewNames.has(f.name));
+    const newOnly=files.filter(f=>!conflictNewNames.has(f.name));
     if(byName.length>0 || byContent.length>0){
-      setReplaceModal({ conflicting:byName, contentConflicts:byContent, newOnly, all:xlsxFiles });
+      setReplaceModal({ conflicting:byName, contentConflicts:byContent, newOnly, all:files });
       return;
     }
-    await doLoadFiles(xlsxFiles);
+    await doLoadFiles(files);
   },[loadedFiles,loadedFileMeta,doLoadFiles]);
 
   const openVoterEditor=useCallback((v)=>{
@@ -1621,7 +1562,7 @@ export default function App(){
       const relation=String(v.relation_name||"").trim();
       const status=v.status||canonicalStatusFromStamp(v.stamp_type);
       const stamp_type=canonicalStampFromStatus(status);
-      const manualRel=v._manualRel?String(v.religion||""):"";
+      const manualRel=v._manualRel||overrides[v._uid]?String(overrides[v._uid]||v.religion||""):"";
       const inferred=classifyReligion(name,relation,effectiveScores);
       const finalRel=manualRel||v.religion||inferred.rel;
       return {
@@ -1639,7 +1580,7 @@ export default function App(){
         _manualRel:!!manualRel,
       };
     });
-  },[effectiveScores]);
+  },[effectiveScores,overrides]);
 
   const exportSessionPack=useCallback(()=>{
     if(!voters.length){
@@ -1647,36 +1588,16 @@ export default function App(){
       return;
     }
     const nowIso=new Date().toISOString();
-    const compactVoters=voters.map(v=>({
-      _uid:v._uid,
-      ac_no:v.ac_no||"",
-      ac_name:v.ac_name||"",
-      part_no:v.part_no||"",
-      serial_no:v.serial_no||"",
-      voter_id:v.voter_id||"",
-      name:v.name||"",
-      relation_name:v.relation_name||"",
-      relation_type:v.relation_type||"",
-      house_no:v.house_no||"",
-      page_no:v.page_no||"",
-      age:v.age??"",
-      gender:v.gender||"",
-      stamp_type:v.stamp_type||"",
-      sourceFile:v.sourceFile||"",
-      religion:v.religion||"Unknown",
-      _manualRel:!!v._manualRel,
-    }));
     const payload={
       schemaVersion:"eimpack.v1",
       createdAt:nowIso,
       appVersion:"1.0",
-      sessionMode:"compact",
       summary:{
-        totalVoters:compactVoters.length,
-        parts:[...new Set(compactVoters.map(v=>v.part_no))].length,
-        acCoverage:[...new Set(compactVoters.map(v=>`${v.ac_no||"?"}-${v.ac_name||"?"}`))],
+        totalVoters:voters.length,
+        parts:[...new Set(voters.map(v=>v.part_no))].length,
+        acCoverage:[...new Set(voters.map(v=>`${v.ac_no||"?"}-${v.ac_name||"?"}`))],
       },
-      voters:compactVoters,
+      voters,
       overrides,
       tokenOverrides,
       loadedFiles,
@@ -1690,14 +1611,12 @@ export default function App(){
     };
     const safeDate=nowIso.slice(0,10);
     const baseName=sanitizeFileName(`Session_${safeDate}`);
-    const payloadText=JSON.stringify(payload); // minified to reduce session size
-    const blob=new Blob([payloadText],{type:"application/json;charset=utf-8"});
+    const blob=new Blob([JSON.stringify(payload,null,2)],{type:"application/json;charset=utf-8"});
     const a=document.createElement("a");
     a.download=`${baseName}.eimpack`;
     a.href=URL.createObjectURL(blob);
     a.click();
     URL.revokeObjectURL(a.href);
-    const approxMb=(blob.size/(1024*1024)).toFixed(2);
 
     // Companion XLSX for human-readable transfer.
     const wb=XLSX.utils.book_new();
@@ -1709,7 +1628,6 @@ export default function App(){
       totalParts:payload.summary.parts,
       theme:payload.ui.theme,
       acCoverage:payload.summary.acCoverage.join("; "),
-      sessionSizeMB:approxMb,
     }]),"Session_Metadata");
     XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(voters.map(v=>toExportRow({...v,override:overrides[v._uid]||null}))),"Session_Voters");
     XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(Object.entries(overrides).map(([uid,rel])=>({uid,religion:rel}))),"Overrides");
@@ -1719,9 +1637,6 @@ export default function App(){
       acNo:m.acNo||"", acName:m.acName||"", importedAt:m.importedAt||"",
     }))),"Loaded_Files");
     XLSX.writeFile(wb,`${baseName}.xlsx`,{compression:true});
-    if(+approxMb>8){
-      window.alert(`Session exported (${approxMb} MB). Tip: use fewer loaded rolls or clear older files before export for smaller packs.`);
-    }
   },[voters,overrides,tokenOverrides,loadedFiles,loadedFileMeta,chartPrefs,theme,gPart,gStatus,gRel,gAge,gGender,gSearch,tab]);
 
   const handleImportSessionFile=useCallback(async(file)=>{
@@ -2248,10 +2163,7 @@ export default function App(){
                       dataKey="value" paddingAngle={2}
                       label={({name,value,percent})=>`${name[0]}: ${value} (${(percent*100).toFixed(0)}%)`}
                       labelLine={false} fontSize={11}>
-                      {adjPie.map((e,i)=>{
-                        const col=e.name==="Muslim"?chartColor.Muslim:(e.name==="Hindu"?chartColor.Hindu:(e.name==="Uncertain"?C.Uncertain:C.Unknown));
-                        return <Cell key={i} fill={col}/>;
-                      })}
+                      {adjPie.map((e,i)=><Cell key={i} fill={C[e.name]||"#6b7280"}/>)}
                     </Pie>
                     <Tooltip {...TT} formatter={(v,n)=>[v+" voters",n]}/>
                   </PieChart>
@@ -2261,7 +2173,7 @@ export default function App(){
               <div style={{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap",marginTop:4}}>
                 {adjPie.map(e=>(
                   <div key={e.name} style={{display:"flex",gap:4,alignItems:"center"}}>
-                    <div style={{width:10,height:10,borderRadius:2,background:e.name==="Muslim"?chartColor.Muslim:(e.name==="Hindu"?chartColor.Hindu:(e.name==="Uncertain"?C.Uncertain:C.Unknown))}}/>
+                    <div style={{width:10,height:10,borderRadius:2,background:C[e.name]||C.dim}}/>
                     <span style={{fontSize:11,color:C.muted}}>{e.name}: {e.value}</span>
                   </div>
                 ))}
@@ -2548,9 +2460,9 @@ export default function App(){
                 <XAxis dataKey="ag" tick={{fill:C.muted,fontSize:10}} angle={-10} textAnchor="end" height={44}/>
                 <YAxis tick={{fill:C.muted,fontSize:11}}/>
                 <Tooltip {...TT}/><Legend iconSize={10} wrapperStyle={{fontSize:11}}/>
-                <Bar dataKey="Active" fill={chartColor.Active} radius={[3,3,0,0]}/>
-                <Bar dataKey="Under Adj" fill={chartColor.UnderAdj} radius={[3,3,0,0]}/>
-                <Bar dataKey="Deleted" fill={chartColor.Deleted} radius={[3,3,0,0]}/>
+                <Bar dataKey="Active" fill={C.active} radius={[3,3,0,0]}/>
+                <Bar dataKey="Under Adj" fill={C.adj} radius={[3,3,0,0]}/>
+                <Bar dataKey="Deleted" fill={C.del} radius={[3,3,0,0]}/>
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -2612,15 +2524,15 @@ export default function App(){
               <Legend iconSize={10} wrapperStyle={{fontSize:11}}/>
               <ReferenceLine y={overallAdjPct} stroke={C.dim} strokeDasharray="4 4"
                 label={{value:`Overall ${overallAdjPct}%`,fill:C.dim,fontSize:10,position:"insideTopRight"}}/>
-              <Line type="monotone" dataKey="mAdjPct" name="Muslim Adj%" stroke={chartColor.Muslim}
-                strokeWidth={2.5} dot={{r:3,fill:chartColor.Muslim}} activeDot={{r:5}}>
+              <Line type="monotone" dataKey="mAdjPct" name="Muslim Adj%" stroke={C.Muslim}
+                strokeWidth={2.5} dot={{r:3,fill:C.Muslim}} activeDot={{r:5}}>
                 <LabelList dataKey="mAdjPct" position="top" formatter={(v)=>`${v}%`}
-                  style={{fill:chartColor.Muslim,fontSize:10,fontWeight:700}}/>
+                  style={{fill:C.Muslim,fontSize:10,fontWeight:700}}/>
               </Line>
-              <Line type="monotone" dataKey="hAdjPct" name="Hindu Adj%" stroke={chartColor.Hindu}
-                strokeWidth={2.5} dot={{r:3,fill:chartColor.Hindu}} activeDot={{r:5}}>
+              <Line type="monotone" dataKey="hAdjPct" name="Hindu Adj%" stroke={C.Hindu}
+                strokeWidth={2.5} dot={{r:3,fill:C.Hindu}} activeDot={{r:5}}>
                 <LabelList dataKey="hAdjPct" position="bottom" formatter={(v)=>`${v}%`}
-                  style={{fill:chartColor.Hindu,fontSize:10,fontWeight:700}}/>
+                  style={{fill:C.Hindu,fontSize:10,fontWeight:700}}/>
               </Line>
             </LineChart>
           </ResponsiveContainer>
@@ -2801,310 +2713,8 @@ export default function App(){
 
   const renderTrends=()=>{
     const topFlags=[...partTrendRows].filter(r=>r.fdrSig).sort((a,b)=>Math.abs(b.diffPct)-Math.abs(a.diffPct)).slice(0,20);
-    const partCompRows=[...new Set(filtered.map(v=>v.part_no))].sort((a,b)=>(+a||0)-(+b||0)).map(pt=>{
-      const pv=filtered.filter(v=>v.part_no===pt);
-      const mRows=pv.filter(v=>effRel(v)==="Muslim");
-      const hRows=pv.filter(v=>effRel(v)==="Hindu");
-      const muslim=mRows.length;
-      const hindu=hRows.length;
-      const uncertain=pv.filter(v=>effRel(v)==="Uncertain").length;
-      const unknown=pv.filter(v=>effRel(v)==="Unknown").length;
-      const active=pv.filter(v=>v.status==="Active").length;
-      const underAdj=pv.filter(v=>v.status==="Under Adjudication").length;
-      const deleted=pv.filter(v=>v.status==="Deleted").length;
-      const mActive=mRows.filter(v=>v.status==="Active").length;
-      const mAdj=mRows.filter(v=>v.status==="Under Adjudication").length;
-      const mDel=mRows.filter(v=>v.status==="Deleted").length;
-      const hActive=hRows.filter(v=>v.status==="Active").length;
-      const hAdj=hRows.filter(v=>v.status==="Under Adjudication").length;
-      const hDel=hRows.filter(v=>v.status==="Deleted").length;
-      const tot=Math.max(1,pv.length);
-      return{
-        part:String(pt), total:pv.length,
-        muslim,hindu,uncertain,unknown,active,underAdj,deleted,
-        mActive,mAdj,mDel,hActive,hAdj,hDel,
-        muslimPct:+((muslim/tot)*100).toFixed(2),
-        hinduPct:+((hindu/tot)*100).toFixed(2),
-        uncertainPct:+((uncertain/tot)*100).toFixed(2),
-        unknownPct:+((unknown/tot)*100).toFixed(2),
-        activePct:+((active/tot)*100).toFixed(2),
-        underAdjPct:+((underAdj/tot)*100).toFixed(2),
-        deletedPct:+((deleted/tot)*100).toFixed(2),
-      };
-    });
-    const countMax=Math.max(10,...partCompRows.map(r=>r.total||0));
-    const yDomain=partVizMode==="share"?[0,100]:(partVizSyncY?[0,countMax]:"auto");
-    const relRows=partCompRows.map(r=>partVizMode==="share"?({
-      part:r.part, Muslim:r.muslimPct, Hindu:r.hinduPct, Uncertain:r.uncertainPct, Unknown:r.unknownPct,
-    }):({
-      part:r.part, Muslim:r.muslim, Hindu:r.hindu, Uncertain:r.uncertain, Unknown:r.unknown,
-    }));
-    const statusRows=partCompRows.map(r=>partVizMode==="share"?({
-      part:r.part, Active:r.activePct, "Under Adj":r.underAdjPct, Deleted:r.deletedPct,
-    }):({
-      part:r.part, Active:r.active, "Under Adj":r.underAdj, Deleted:r.deleted,
-    }));
-    const tripleCats=partTripleDim==="religion"
-      ?["Muslim","Hindu","Uncertain","Unknown"]
-      :["18–22","23–30","31–39","40–44★","45–60","60+","Unknown"];
-    const tripleColor=(k)=>{
-      if(k==="Muslim") return chartColor.Muslim;
-      if(k==="Hindu") return chartColor.Hindu;
-      if(k==="Uncertain") return C.Uncertain;
-      if(k==="Unknown") return C.Unknown;
-      if(k==="18–22") return "#0ea5e9";
-      if(k==="23–30") return "#22c55e";
-      if(k==="31–39") return "#3b82f6";
-      if(k==="40–44★") return "#f59e0b";
-      if(k==="45–60") return "#ef4444";
-      if(k==="60+") return "#8b5cf6";
-      return C.dim;
-    };
-    const tripleRowsByPart=[...new Set(filtered.map(v=>v.part_no))].sort((a,b)=>(+a||0)-(+b||0)).map(pt=>{
-      const pv=filtered.filter(v=>v.part_no===pt);
-      const pop={}; const ua={}; const dl={};
-      tripleCats.forEach(c=>{ pop[c]=0; ua[c]=0; dl[c]=0; });
-      pv.forEach(v=>{
-        const key=partTripleDim==="religion"?(effRel(v)||"Unknown"):(v.ageGroup||"Unknown");
-        if(!(key in pop)) return;
-        pop[key]+=1;
-        if(v.status==="Under Adjudication") ua[key]+=1;
-        if(v.status==="Deleted") dl[key]+=1;
-      });
-      const norm=(obj)=>{
-        if(partTripleMode!=="share") return obj;
-        const tot=Object.values(obj).reduce((s,n)=>s+(Number(n)||0),0)||1;
-        const out={}; Object.keys(obj).forEach(k=>{ out[k]=+((obj[k]/tot)*100).toFixed(2); });
-        return out;
-      };
-      return { part:String(pt), total:pv.length, pop:norm(pop), ua:norm(ua), dl:norm(dl) };
-    });
-    const triplePopRows=tripleRowsByPart.map(r=>({part:r.part,...r.pop}));
-    const tripleUaRows=tripleRowsByPart.map(r=>({part:r.part,...r.ua}));
-    const tripleDlRows=tripleRowsByPart.map(r=>({part:r.part,...r.dl}));
-    const tripleMax=Math.max(10,
-      ...triplePopRows.map(r=>tripleCats.reduce((s,k)=>s+(r[k]||0),0)),
-      ...tripleUaRows.map(r=>tripleCats.reduce((s,k)=>s+(r[k]||0),0)),
-      ...tripleDlRows.map(r=>tripleCats.reduce((s,k)=>s+(r[k]||0),0)),
-    );
-    const totalDonutPages=Math.max(1,Math.ceil(partCompRows.length/Math.max(1,donutPerPage)));
-    const safeDonutPage=Math.min(donutPage,totalDonutPages-1);
-    const donutRows=partCompRows.slice(safeDonutPage*donutPerPage,(safeDonutPage+1)*donutPerPage);
-    const musBase=normalizeHexColor(chartColor.Muslim,C.Muslim);
-    const hinBase=normalizeHexColor(chartColor.Hindu,C.Hindu);
-    const donutParts=donutRows.map(r=>{
-      const slices=[
-        { key:"M_OK", label:"M OK", value:r.mActive, color:tintHex(musBase,0.15) },
-        { key:"M_UA", label:"M UA", value:r.mAdj, color:tintHex(musBase,-0.18) },
-        { key:"M_DL", label:"M DL", value:r.mDel, color:tintHex(musBase,0.35) },
-        { key:"H_OK", label:"H OK", value:r.hActive, color:tintHex(hinBase,0.12) },
-        { key:"H_UA", label:"H UA", value:r.hAdj, color:tintHex(hinBase,-0.12) },
-        { key:"H_DL", label:"H DL", value:r.hDel, color:tintHex(hinBase,0.3) },
-      ];
-      return {part:r.part,total:r.total,slices};
-    });
-    const donutLabel=(part)=>(p)=>{
-      const {name,value,percent,cx,cy,midAngle,outerRadius}=p;
-      if(!value || percent<0.03) return null;
-      const RAD=Math.PI/180;
-      const r=(outerRadius||0)+18;
-      const x=(cx||0)+r*Math.cos(-(midAngle||0)*RAD);
-      const y=(cy||0)+r*Math.sin(-(midAngle||0)*RAD);
-      const anchor=x>(cx||0)?"start":"end";
-      return <text x={x} y={y} fill={C.muted} textAnchor={anchor} fontSize={10}>{`${name}: ${value}`}</text>;
-    };
     return(
       <div style={{display:"flex",flexDirection:"column",gap:16}}>
-        <Panel>
-          <SH onExport={()=>openChartExport({
-            containerId:"chartPartTripleBars",
-            filename:`part_triple_${partTripleDim}_${partTripleMode}`,
-            rows:tripleRowsByPart,
-            title:"Part-wise Triple Stacked Bars",
-            subtitle:`Population / Under Adjudication / Deleted by ${partTripleDim==="religion"?"religion":"age group"}`,
-            chartType:`Triple stacked bars (${partTripleMode})`,
-          })} sub="Each part has three synchronized stacked views: whole population, under-adjudication composition, and deleted composition.">
-            Part-wise Triple Bars
-          </SH>
-          <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10,alignItems:"center"}}>
-            <select value={partTripleDim} onChange={e=>setPartTripleDim(e.target.value)}
-              style={{padding:"6px 10px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,fontSize:12}}>
-              <option value="religion">Split by Religion</option>
-              <option value="age">Split by Age Group</option>
-            </select>
-            <select value={partTripleMode} onChange={e=>setPartTripleMode(e.target.value)}
-              style={{padding:"6px 10px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,fontSize:12}}>
-              <option value="absolute">Absolute values</option>
-              <option value="share">100% stacked share</option>
-            </select>
-            <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:C.text}}>
-              Height
-              <input type="range" min="180" max="360" step="10" value={partTripleHeight}
-                onChange={e=>setPartTripleHeight(+e.target.value)}
-                style={{accentColor:C.blue}}/>
-              <span style={{color:C.dim,fontFamily:MONO,fontSize:11}}>{partTripleHeight}px</span>
-            </label>
-          </div>
-          <div id="chartPartTripleBars" style={{display:"grid",gridTemplateColumns:"1fr",gap:10}}>
-            <div style={{fontSize:11,color:C.dim}}>Population composition</div>
-            <ResponsiveContainer width="100%" height={partTripleHeight}>
-              <BarChart data={triplePopRows} syncId="partTripleSync" margin={{top:10,right:16,left:4,bottom:50}}>
-                <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
-                <XAxis dataKey="part" tick={{fill:C.muted,fontSize:10}} angle={-28} textAnchor="end" interval={0}/>
-                <YAxis tick={{fill:C.muted,fontSize:11}} domain={partTripleMode==="share"?[0,100]:[0,tripleMax]} unit={partTripleMode==="share"?"%":""}/>
-                <Tooltip {...TT}/>
-                <Legend iconSize={10} wrapperStyle={{fontSize:11}}/>
-                {tripleCats.map((k,idx)=><Bar key={`pop_${k}`} dataKey={k} stackId="p" fill={tripleColor(k)} radius={idx===tripleCats.length-1?[4,4,0,0]:undefined}/>)}
-              </BarChart>
-            </ResponsiveContainer>
-            <div style={{fontSize:11,color:C.dim}}>Under Adjudication composition</div>
-            <ResponsiveContainer width="100%" height={partTripleHeight}>
-              <BarChart data={tripleUaRows} syncId="partTripleSync" margin={{top:10,right:16,left:4,bottom:50}}>
-                <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
-                <XAxis dataKey="part" tick={{fill:C.muted,fontSize:10}} angle={-28} textAnchor="end" interval={0}/>
-                <YAxis tick={{fill:C.muted,fontSize:11}} domain={partTripleMode==="share"?[0,100]:[0,tripleMax]} unit={partTripleMode==="share"?"%":""}/>
-                <Tooltip {...TT}/>
-                {tripleCats.map((k,idx)=><Bar key={`ua_${k}`} dataKey={k} stackId="u" fill={tripleColor(k)} radius={idx===tripleCats.length-1?[4,4,0,0]:undefined}/>)}
-              </BarChart>
-            </ResponsiveContainer>
-            <div style={{fontSize:11,color:C.dim}}>Deleted composition</div>
-            <ResponsiveContainer width="100%" height={partTripleHeight}>
-              <BarChart data={tripleDlRows} syncId="partTripleSync" margin={{top:10,right:16,left:4,bottom:50}}>
-                <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
-                <XAxis dataKey="part" tick={{fill:C.muted,fontSize:10}} angle={-28} textAnchor="end" interval={0}/>
-                <YAxis tick={{fill:C.muted,fontSize:11}} domain={partTripleMode==="share"?[0,100]:[0,tripleMax]} unit={partTripleMode==="share"?"%":""}/>
-                <Tooltip {...TT}/>
-                {tripleCats.map((k,idx)=><Bar key={`dl_${k}`} dataKey={k} stackId="d" fill={tripleColor(k)} radius={idx===tripleCats.length-1?[4,4,0,0]:undefined}/>)}
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </Panel>
-        <Panel>
-          <SH onExport={()=>openChartExport({
-            containerId:"chartPartPopulationBundle",
-            filename:`part_population_composition_${partVizMode}`,
-            rows:partCompRows,
-            title:"Part-wise Population Composition",
-            subtitle:"Stacked religion and status composition by part",
-            chartType:`Synchronized stacked bars (${partVizMode})`,
-            note:`Mode: ${partVizMode} · Sync-Y: ${partVizSyncY?"On":"Off"}`,
-          })} sub="Each part as a stacked bar. Two synchronized views: religion composition and status composition.">
-            Part-wise Population Composition
-          </SH>
-          <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
-            <select value={partVizMode} onChange={e=>setPartVizMode(e.target.value)}
-              style={{padding:"6px 10px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,fontSize:12}}>
-              <option value="count">Mode: Absolute counts</option>
-              <option value="share">Mode: 100% stacked share</option>
-            </select>
-            <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:C.text,padding:"0 4px"}}>
-              Height
-              <input type="range" min="180" max="420" step="10" value={partVizHeight}
-                onChange={e=>setPartVizHeight(+e.target.value)}
-                style={{accentColor:C.blue}}/>
-              <span style={{color:C.dim,fontFamily:MONO,fontSize:11}}>{partVizHeight}px</span>
-            </label>
-            <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:C.text}}>
-              <input type="checkbox" checked={partVizSyncY} onChange={e=>setPartVizSyncY(e.target.checked)}/>
-              Keep Y-axis synced
-            </label>
-          </div>
-          <div id="chartPartPopulationBundle" style={{display:"grid",gridTemplateColumns:"1fr",gap:10}}>
-            <div>
-              <div style={{fontSize:11,color:C.dim,marginBottom:4}}>Religion composition by part</div>
-              <ResponsiveContainer width="100%" height={partVizHeight}>
-                <BarChart data={relRows} syncId="partStackSync" margin={{top:10,right:16,left:4,bottom:50}}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
-                  <XAxis dataKey="part" tick={{fill:C.muted,fontSize:10}} angle={-28} textAnchor="end" interval={0}/>
-                  <YAxis tick={{fill:C.muted,fontSize:11}} domain={yDomain} unit={partVizMode==="share"?"%":""}/>
-                  <Tooltip {...TT}/>
-                  <Legend iconSize={10} wrapperStyle={{fontSize:11}}/>
-                  <Bar dataKey="Muslim" stackId="s" fill={chartColor.Muslim}/>
-                  <Bar dataKey="Hindu" stackId="s" fill={chartColor.Hindu}/>
-                  <Bar dataKey="Uncertain" stackId="s" fill={C.Uncertain}/>
-                  <Bar dataKey="Unknown" stackId="s" fill={C.Unknown}/>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-            <div>
-              <div style={{fontSize:11,color:C.dim,marginBottom:4}}>Status composition by part</div>
-              <ResponsiveContainer width="100%" height={partVizHeight}>
-                <BarChart data={statusRows} syncId="partStackSync" margin={{top:10,right:16,left:4,bottom:50}}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
-                  <XAxis dataKey="part" tick={{fill:C.muted,fontSize:10}} angle={-28} textAnchor="end" interval={0}/>
-                  <YAxis tick={{fill:C.muted,fontSize:11}} domain={yDomain} unit={partVizMode==="share"?"%":""}/>
-                  <Tooltip {...TT}/>
-                  <Legend iconSize={10} wrapperStyle={{fontSize:11}}/>
-                  <Bar dataKey="Active" stackId="k" fill={chartColor.Active}/>
-                  <Bar dataKey="Under Adj" stackId="k" fill={chartColor.UnderAdj}/>
-                  <Bar dataKey="Deleted" stackId="k" fill={chartColor.Deleted}/>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        </Panel>
-        <Panel>
-          <SH onExport={()=>openChartExport({
-            containerId:"chartPartDonutGrid",
-            filename:`part_donut_grid_p${safeDonutPage+1}`,
-            rows:donutRows,
-            title:"Part-wise Muslim/Hindu Status Donuts",
-            subtitle:`Page ${safeDonutPage+1}/${totalDonutPages} · ${donutRows.length} part(s)`,
-            chartType:"Donut small multiples",
-            note:"Slices: M/H split with OK, UA, DL shades",
-          })} sub="For each part: Muslim and Hindu shares split into OK / UA / DL shades with callout labels.">
-            Part-wise Targeting Donuts
-          </SH>
-          <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10,alignItems:"center"}}>
-            <label style={{fontSize:12,color:C.text,display:"flex",alignItems:"center",gap:6}}>
-              Parts per page
-              <select value={donutPerPage} onChange={e=>{setDonutPerPage(+e.target.value||8);setDonutPage(0);}}
-                style={{padding:"5px 8px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,fontSize:12}}>
-                <option value="4">4</option>
-                <option value="6">6</option>
-                <option value="8">8</option>
-                <option value="12">12</option>
-              </select>
-            </label>
-            <span style={{fontSize:11,color:C.dim,fontFamily:MONO}}>
-              Page {safeDonutPage+1}/{totalDonutPages}
-            </span>
-            <button onClick={()=>setDonutPage(p=>Math.max(0,p-1))}
-              disabled={safeDonutPage===0}
-              style={{padding:"4px 10px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontSize:11,cursor:"pointer"}}>
-              Prev
-            </button>
-            <button onClick={()=>setDonutPage(p=>Math.min(totalDonutPages-1,p+1))}
-              disabled={safeDonutPage>=totalDonutPages-1}
-              style={{padding:"4px 10px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontSize:11,cursor:"pointer"}}>
-              Next
-            </button>
-          </div>
-          <div id="chartPartDonutGrid" style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(250px,1fr))",gap:12}}>
-            {donutParts.length===0&&(
-              <div style={{gridColumn:"1 / -1",padding:20,textAlign:"center",color:C.dim,fontSize:12}}>
-                No part data available for current filters.
-              </div>
-            )}
-            {donutParts.map(d=>(
-              <div key={d.part} style={{border:`1px solid ${C.border}`,borderRadius:10,padding:10,background:C.bg}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-                  <div style={{fontSize:12,fontWeight:700,color:C.text}}>Part {d.part}</div>
-                  <div style={{fontSize:10,color:C.dim,fontFamily:MONO}}>{d.total} voters</div>
-                </div>
-                <ResponsiveContainer width="100%" height={190}>
-                  <PieChart>
-                    <Pie data={d.slices} dataKey="value" nameKey="label" cx="50%" cy="50%"
-                      outerRadius={62} innerRadius={30} paddingAngle={1} labelLine={true} label={donutLabel(d.part)}>
-                      {d.slices.map((s,i)=><Cell key={`${d.part}_${s.key}_${i}`} fill={s.color}/>)}
-                    </Pie>
-                    <Tooltip {...TT} formatter={(v,n)=>[`${v} voters`,n]}/>
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-            ))}
-          </div>
-        </Panel>
         <Panel>
           <SH sub="Per-part Muslim vs Hindu adjudication decomposition with effect sizes and FDR correction">
             Part Trend Decomposition
@@ -3123,8 +2733,8 @@ export default function App(){
                 <YAxis tick={{fill:C.muted,fontSize:11}} unit="%"/>
                 <Tooltip {...TT}/>
                 <Legend iconSize={10} wrapperStyle={{fontSize:11}}/>
-                <Line type="monotone" dataKey="mRate" name="Muslim Adj%" stroke={chartColor.Muslim} strokeWidth={2} dot={false}/>
-                <Line type="monotone" dataKey="hRate" name="Hindu Adj%" stroke={chartColor.Hindu} strokeWidth={2} dot={false}/>
+                <Line type="monotone" dataKey="mRate" name="Muslim Adj%" stroke={C.Muslim} strokeWidth={2} dot={false}/>
+                <Line type="monotone" dataKey="hRate" name="Hindu Adj%" stroke={C.Hindu} strokeWidth={2} dot={false}/>
                 <Line type="monotone" dataKey="diffPct" name="Risk Difference (pp)" stroke={C.blue} strokeDasharray="5 3" strokeWidth={1.6} dot={false}/>
               </LineChart>
             </ResponsiveContainer>
@@ -3341,16 +2951,12 @@ export default function App(){
                     const isEditing=editingId===v._uid;
                     return(
                       <tr key={v._uid} style={{borderBottom:`1px solid ${C.bg}`,
-                        background:v.status==="Under Adjudication"?C.adj+"1f":
-                                   v.status==="Deleted"?C.del+"1f":"",
-                        borderLeft:v.status==="Under Adjudication"?`3px solid ${C.adj}`:
-                                  v.status==="Deleted"?`3px solid ${C.del}`:"3px solid transparent"}}
-                        onMouseEnter={e=>e.currentTarget.style.background=
-                          v.status==="Under Adjudication"?C.adj+"28":
-                          v.status==="Deleted"?C.del+"28":C.bg}
+                        background:v.status==="Under Adjudication"?C.adj+"08":
+                                   v.status==="Deleted"?C.del+"08":""}}
+                        onMouseEnter={e=>e.currentTarget.style.background=C.bg}
                         onMouseLeave={e=>e.currentTarget.style.background=
-                          v.status==="Under Adjudication"?C.adj+"1f":
-                          v.status==="Deleted"?C.del+"1f":""}>
+                          v.status==="Under Adjudication"?C.adj+"08":
+                          v.status==="Deleted"?C.del+"08":""}>
                         <td style={{padding:"5px 8px",textAlign:"center",color:C.dim,fontFamily:MONO}}>{v.serial_no}</td>
                         <td style={{padding:"5px 8px",color:C.dim,fontFamily:MONO,fontSize:10}}>{v.voter_id}</td>
                         <td style={{padding:"5px 8px",color:C.text,fontWeight:600,minWidth:140}}>{v.name}</td>
@@ -3507,15 +3113,11 @@ export default function App(){
                 const ov=overrides[v._uid];
                 return(
                   <tr key={v._uid} style={{borderBottom:`1px solid ${C.bg}`,
-                    background:v.status==="Under Adjudication"?C.adj+"1f":
-                               v.status==="Deleted"?C.del+"1f":"",
-                    borderLeft:v.status==="Under Adjudication"?`3px solid ${C.adj}`:
-                              v.status==="Deleted"?`3px solid ${C.del}`:"3px solid transparent"}}
-                    onMouseEnter={e=>e.currentTarget.style.background=
-                      v.status==="Under Adjudication"?C.adj+"28":
-                      v.status==="Deleted"?C.del+"28":C.bg}
+                    background:v.status==="Under Adjudication"?C.adj+"08":
+                               v.status==="Deleted"?C.del+"08":""}}
+                    onMouseEnter={e=>e.currentTarget.style.background=C.bg}
                     onMouseLeave={e=>e.currentTarget.style.background=
-                      v.status==="Under Adjudication"?C.adj+"1f":v.status==="Deleted"?C.del+"1f":""}>
+                      v.status==="Under Adjudication"?C.adj+"08":v.status==="Deleted"?C.del+"08":""}>
                     <td style={{padding:"5px 10px",textAlign:"center",color:C.dim,fontFamily:MONO}}>{v.serial_no}</td>
                     <td style={{padding:"5px 10px",textAlign:"center",color:C.blue,fontFamily:MONO,fontWeight:700}}>{v.part_no}</td>
                     <td style={{padding:"5px 10px",color:C.dim,fontFamily:MONO,fontSize:10}}>{v.voter_id}</td>
@@ -3529,18 +3131,11 @@ export default function App(){
                     </td>
                     <td style={{padding:"5px 10px",textAlign:"center",color:C.muted,fontSize:10}}>{v.ageGroup}</td>
                     <td style={{padding:"5px 10px",textAlign:"center"}}>
-                      <div style={{display:"flex",gap:4,justifyContent:"center"}}>
-                        <button onClick={()=>openVoterEditor(v)}
-                          style={{padding:"2px 8px",background:"transparent",border:`1px solid ${C.border}`,
-                            borderRadius:4,color:ov?C.yellow:C.dim,fontSize:10,cursor:"pointer",fontFamily:FONT}}>
-                          {ov?"✎ "+ov:"✎ Rel"}
-                        </button>
-                        <button onClick={()=>openVoterEditor(v)}
-                          style={{padding:"2px 8px",background:"transparent",border:`1px solid ${C.border}`,
-                            borderRadius:4,color:C.blue,fontSize:10,cursor:"pointer",fontFamily:FONT}}>
-                          Edit
-                        </button>
-                      </div>
+                      <button onClick={()=>openVoterEditor(v)}
+                        style={{padding:"2px 8px",background:"transparent",border:`1px solid ${C.border}`,
+                          borderRadius:4,color:C.blue,fontSize:10,cursor:"pointer",fontFamily:FONT}}>
+                        Edit
+                      </button>
                     </td>
                   </tr>
                 );
@@ -4579,7 +4174,7 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
   );
 
   // ── Render ──────────────────────────────────────────────────────────────────
-  if(!voters.length&&!loading) return <UploadScreen onFiles={loadFiles} loading={loading} theme={theme} setTheme={setTheme}/>;
+  if(!voters.length&&!loading) return <UploadScreen onFiles={loadFiles} loading={loading}/>;
 
   const TABS=[
     {id:"overview",label:"Overview"},
@@ -4668,7 +4263,7 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
             Reset
           </button>
           <input ref={fileRef} type="file" accept=".xlsx" multiple style={{display:"none"}}
-            onChange={e=>{ loadFiles(Array.from(e.target.files||[])); e.target.value=""; }}/>
+            onChange={e=>loadFiles(Array.from(e.target.files))}/>
           <input ref={sessionFileRef} type="file" accept=".eimpack,.json,.xlsx" style={{display:"none"}}
             onChange={e=>handleImportSessionFile(e.target.files?.[0])}/>
         </div>
