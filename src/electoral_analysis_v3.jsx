@@ -765,6 +765,8 @@ export default function App(){
   const [caCompare,setCaCompare]=useState("all");
   const [caMode,setCaMode]=useState("grouped");
   const [caStackBy,setCaStackBy]=useState("status");
+  const [partBarsSplit,setPartBarsSplit]=useState("religion"); // religion | age
+  const [partBarsMode,setPartBarsMode]=useState("absolute"); // absolute | share
 
   // Voter list state
   const [vPage,setVPage]=useState(0);
@@ -2713,8 +2715,110 @@ export default function App(){
 
   const renderTrends=()=>{
     const topFlags=[...partTrendRows].filter(r=>r.fdrSig).sort((a,b)=>Math.abs(b.diffPct)-Math.abs(a.diffPct)).slice(0,20);
+    const dimKeys=partBarsSplit==="religion"
+      ?["Muslim","Hindu","Uncertain","Unknown"]
+      :["18–22","23–30","31–39","40–44★","45–60","60+","Unknown"];
+    const dimColor=(k)=>{
+      if(k==="Muslim") return chartColor.Muslim;
+      if(k==="Hindu") return chartColor.Hindu;
+      if(k==="Uncertain") return C.Uncertain;
+      if(k==="Unknown") return C.Unknown;
+      if(k==="18–22") return "#06b6d4";
+      if(k==="23–30") return "#22c55e";
+      if(k==="31–39") return "#3b82f6";
+      if(k==="40–44★") return "#f59e0b";
+      if(k==="45–60") return "#ef4444";
+      if(k==="60+") return "#8b5cf6";
+      return C.dim;
+    };
+    const partRows=[...new Set(filtered.map(v=>String(v.part_no||"")))]
+      .filter(Boolean).sort((a,b)=>(+a||0)-(+b||0))
+      .map(part=>{
+        const pv=filtered.filter(v=>String(v.part_no||"")===String(part));
+        const init={}; dimKeys.forEach(k=>{ init[k]=0; });
+        const pop={...init}, ua={...init}, dl={...init};
+        pv.forEach(v=>{
+          const key=partBarsSplit==="religion"?(effRel(v)||"Unknown"):(v.ageGroup||"Unknown");
+          if(!(key in pop)) return;
+          pop[key]+=1;
+          if(v.status==="Under Adjudication") ua[key]+=1;
+          if(v.status==="Deleted") dl[key]+=1;
+        });
+        const norm=(obj)=>{
+          if(partBarsMode!=="share") return obj;
+          const t=Object.values(obj).reduce((s,n)=>s+(+n||0),0)||1;
+          const out={}; Object.keys(obj).forEach(k=>{ out[k]=+((obj[k]/t)*100).toFixed(2); });
+          return out;
+        };
+        return {part, pop:norm(pop), ua:norm(ua), dl:norm(dl)};
+      });
+    const popRows=partRows.map(r=>({part:r.part,...r.pop}));
+    const uaRows=partRows.map(r=>({part:r.part,...r.ua}));
+    const dlRows=partRows.map(r=>({part:r.part,...r.dl}));
+    const maxAbs=Math.max(10,
+      ...popRows.map(r=>dimKeys.reduce((s,k)=>s+(r[k]||0),0)),
+      ...uaRows.map(r=>dimKeys.reduce((s,k)=>s+(r[k]||0),0)),
+      ...dlRows.map(r=>dimKeys.reduce((s,k)=>s+(r[k]||0),0)),
+    );
     return(
       <div style={{display:"flex",flexDirection:"column",gap:16}}>
+        <Panel>
+          <SH onExport={()=>openChartExport({
+            containerId:"chartPartwiseThreeBars",
+            filename:`partwise_threebars_${partBarsSplit}_${partBarsMode}`,
+            rows:partRows,
+            title:"Part-wise 3-Bar Composition",
+            subtitle:`Population, UA and Deleted by ${partBarsSplit==="religion"?"religion":"age group"}`,
+            chartType:`Triple stacked bars (${partBarsMode})`,
+          })} sub="Each part has three synchronized stacked bars: Total population, Under Adjudication, and Deleted.">
+            Part-wise 3-Bar Composition
+          </SH>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
+            <select value={partBarsSplit} onChange={e=>setPartBarsSplit(e.target.value)}
+              style={{padding:"6px 10px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,fontSize:12}}>
+              <option value="religion">Split: Religion</option>
+              <option value="age">Split: Age Group</option>
+            </select>
+            <select value={partBarsMode} onChange={e=>setPartBarsMode(e.target.value)}
+              style={{padding:"6px 10px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,fontSize:12}}>
+              <option value="absolute">Mode: Absolute values</option>
+              <option value="share">Mode: 100% share</option>
+            </select>
+          </div>
+          <div id="chartPartwiseThreeBars" style={{display:"grid",gridTemplateColumns:"1fr",gap:10}}>
+            <div style={{fontSize:11,color:C.dim}}>Whole population composition</div>
+            <ResponsiveContainer width="100%" height={210}>
+              <BarChart data={popRows} syncId="part3sync" margin={{top:10,right:16,left:4,bottom:50}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
+                <XAxis dataKey="part" tick={{fill:C.muted,fontSize:10}} angle={-28} textAnchor="end" interval={0}/>
+                <YAxis tick={{fill:C.muted,fontSize:11}} domain={partBarsMode==="share"?[0,100]:[0,maxAbs]} unit={partBarsMode==="share"?"%":""}/>
+                <Tooltip {...TT}/>
+                <Legend iconSize={10} wrapperStyle={{fontSize:11}}/>
+                {dimKeys.map((k,i)=><Bar key={`pop_${k}`} dataKey={k} stackId="a" fill={dimColor(k)} radius={i===dimKeys.length-1?[4,4,0,0]:undefined}/>)}
+              </BarChart>
+            </ResponsiveContainer>
+            <div style={{fontSize:11,color:C.dim}}>Under Adjudication composition</div>
+            <ResponsiveContainer width="100%" height={210}>
+              <BarChart data={uaRows} syncId="part3sync" margin={{top:10,right:16,left:4,bottom:50}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
+                <XAxis dataKey="part" tick={{fill:C.muted,fontSize:10}} angle={-28} textAnchor="end" interval={0}/>
+                <YAxis tick={{fill:C.muted,fontSize:11}} domain={partBarsMode==="share"?[0,100]:[0,maxAbs]} unit={partBarsMode==="share"?"%":""}/>
+                <Tooltip {...TT}/>
+                {dimKeys.map((k,i)=><Bar key={`ua_${k}`} dataKey={k} stackId="b" fill={dimColor(k)} radius={i===dimKeys.length-1?[4,4,0,0]:undefined}/>)}
+              </BarChart>
+            </ResponsiveContainer>
+            <div style={{fontSize:11,color:C.dim}}>Deleted composition</div>
+            <ResponsiveContainer width="100%" height={210}>
+              <BarChart data={dlRows} syncId="part3sync" margin={{top:10,right:16,left:4,bottom:50}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
+                <XAxis dataKey="part" tick={{fill:C.muted,fontSize:10}} angle={-28} textAnchor="end" interval={0}/>
+                <YAxis tick={{fill:C.muted,fontSize:11}} domain={partBarsMode==="share"?[0,100]:[0,maxAbs]} unit={partBarsMode==="share"?"%":""}/>
+                <Tooltip {...TT}/>
+                {dimKeys.map((k,i)=><Bar key={`dl_${k}`} dataKey={k} stackId="c" fill={dimColor(k)} radius={i===dimKeys.length-1?[4,4,0,0]:undefined}/>)}
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </Panel>
         <Panel>
           <SH sub="Per-part Muslim vs Hindu adjudication decomposition with effect sizes and FDR correction">
             Part Trend Decomposition
@@ -4273,8 +4377,8 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
       {replaceModal&&(
         <div style={{position:"fixed",inset:0,background:"#00000099",zIndex:70,
           display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-          <div style={{width:"min(520px,94vw)",background:C.panel,
-            border:`1px solid ${C.orange}66`,borderRadius:12,padding:24}}>
+          <div style={{width:"min(620px,96vw)",maxHeight:"92vh",display:"flex",flexDirection:"column",
+            background:C.panel,border:`1px solid ${C.orange}66`,borderRadius:12,padding:20}}>
             <div style={{fontSize:15,fontWeight:800,color:C.text,marginBottom:6}}>
               ⚠ Duplicate Roll Detected
             </div>
@@ -4282,7 +4386,12 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
               {replaceModal.conflicting?.length>0&&`Some files already exist by filename.`}
               {replaceModal.contentConflicts?.length>0&&`${replaceModal.conflicting?.length>0?" ":""}Some files have duplicate content hash with already loaded rolls.`}
             </div>
-            <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:18}}>
+            <div style={{display:"flex",gap:12,flexWrap:"wrap",fontSize:12,color:C.dim,marginBottom:8}}>
+              <span><b style={{color:C.text}}>{replaceModal.conflicting?.length||0}</b> filename matches</span>
+              <span><b style={{color:C.text}}>{replaceModal.contentConflicts?.length||0}</b> content duplicates</span>
+              <span><b style={{color:C.text}}>{replaceModal.newOnly?.length||0}</b> new files</span>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:12,overflowY:"auto",maxHeight:"44vh",paddingRight:4}}>
               {(replaceModal.conflicting||[]).map(f=>(
                 <div key={f.name} style={{display:"flex",alignItems:"center",gap:10,
                   padding:"8px 12px",background:C.bg,borderRadius:8,
@@ -4334,7 +4443,7 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
               <b style={{color:C.text}}>Add Anyway</b> — appends on top (may create duplicates).<br/>
               <b style={{color:C.text}}>Discard Duplicates</b> — loads only non-duplicate file{replaceModal.newOnly.length!==1?"s":""}.
             </div>
-            <div style={{display:"flex",gap:8,justifyContent:"flex-end",flexWrap:"wrap"}}>
+            <div style={{display:"flex",gap:8,justifyContent:"flex-end",flexWrap:"wrap",position:"sticky",bottom:0,background:C.panel,paddingTop:8}}>
               <button onClick={()=>setReplaceModal(null)}
                 style={{padding:"7px 16px",background:"transparent",
                   border:`1px solid ${C.border}`,borderRadius:7,
