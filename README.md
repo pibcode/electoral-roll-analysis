@@ -2,6 +2,9 @@
 
 A local web app to analyze electoral roll Excel files.
 
+Full documentation:
+- [User Guide](./USER_GUIDE.md)
+
 It helps you:
 - load one or many voter roll `.xlsx` files
 - detect duplicates (row-level and same-content files)

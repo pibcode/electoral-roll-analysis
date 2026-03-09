@@ -1,4 +1,5 @@
-import { useState, useCallback, useRef, useMemo, useEffect, Component } from "react";
+import { useState, useCallback, useRef, useMemo, useEffect, Component, Fragment } from "react";
+import USER_GUIDE_TEXT from "../USER_GUIDE.md?raw";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, PieChart, Pie, Cell, LabelList,
@@ -790,6 +791,15 @@ function readInsightsWorkbookData(wb, XLSX){
   };
 }
 
+function downloadPlainTextFile(filename, text, mime="text/plain;charset=utf-8"){
+  const blob=new Blob([text],{type:mime});
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob);
+  a.download=filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 async function sha256HexArrayBuffer(buf){
   try{
     if(typeof crypto!=="undefined"&&crypto.subtle){
@@ -1188,6 +1198,8 @@ function AppInner(){
   const [resolvedDuplicateKeys,setResolvedDuplicateKeys]=useState({});
   const [resolvedFileHashes,setResolvedFileHashes]=useState({});
   const [dupStatusFilter,setDupStatusFilter]=useState("all");
+  const [duplicateCompareModal,setDuplicateCompareModal]=useState(null); // {type:"row"|"file", group}
+  const [duplicateCompareLayout,setDuplicateCompareLayout]=useState("side");
   const [colMapModal,setColMapModal]=useState(null); // {file, actualCols, mapping, missing, resolve}
   const [tokenLearnCount,setTokenLearnCount]=useState(()=>{
     try{
@@ -2317,6 +2329,122 @@ function AppInner(){
       }))
       .sort((a,b)=>b.count-a.count);
   },[loadedFileMeta,resolvedFileHashes,needDuplicateData]);
+
+  const duplicateRowCompareFields=useMemo(()=>[
+    ["AC", r=>`${r.ac_no||"—"} · ${r.ac_name||"—"}`],
+    ["Religion", r=>`${r.override||r.religion||"—"}${r.override?" (override)":""}`],
+    ["Relation", r=>`${r.relation_type||"—"} · ${r.relation_name||"—"}`],
+    ["Age / Gender", r=>`${r.age||"—"} · ${r.gender||"—"}`],
+    ["House / Page", r=>`${r.house_no||"—"} · Page ${r.page_no||"—"}`],
+    ["Source file", r=>r.sourceFile||"—"],
+    ["Imported", r=>loadedFileMeta?.[r.sourceFile]?.importedAt?new Date(loadedFileMeta[r.sourceFile].importedAt).toLocaleString():"—"],
+    ["Internal UID", r=>r._uid||"—"],
+  ],[loadedFileMeta]);
+
+  const duplicateFileCompareFields=useMemo(()=>[
+    ["Rows", m=>String(m.rowCount||0)],
+    ["Parts", m=>(m.parts||[]).join(", ")||"—"],
+    ["Size", m=>m.size?`${m.size.toLocaleString()} bytes`:"—"],
+    ["Imported", m=>m.importedAt?new Date(m.importedAt).toLocaleString():"—"],
+    ["Raw hash", m=>String(m.rawHash||"—")],
+    ["Semantic hash", m=>String(m.semanticHash||"—")],
+  ],[]);
+
+  const duplicateDiffSet=useCallback((items,fields)=>{
+    const changed=new Set();
+    (fields||[]).forEach(([label,getter])=>{
+      const values=(items||[]).map(item=>String(getter(item)??"").trim());
+      if(new Set(values).size>1) changed.add(label);
+    });
+    return changed;
+  },[]);
+
+  const removeDuplicateRowsByUid=useCallback((uids)=>{
+    const drop=new Set((uids||[]).filter(Boolean));
+    if(!drop.size) return;
+    setVoters(prev=>prev.filter(v=>!drop.has(v._uid)));
+    setOverrides(prev=>{
+      const next={...prev};
+      drop.forEach(uid=>{ delete next[uid]; });
+      return next;
+    });
+  },[]);
+
+  const keepOnlyDuplicateRow=useCallback((group,keepUid)=>{
+    if(!group?.rows?.length||!keepUid) return;
+    const removeIds=group.rows.map(r=>r._uid).filter(uid=>uid&&uid!==keepUid);
+    removeDuplicateRowsByUid(removeIds);
+    setResolvedDuplicateKeys(prev=>({...prev,[group.key]:true}));
+    setDuplicateCompareModal(null);
+  },[removeDuplicateRowsByUid]);
+
+  const removeSingleDuplicateRow=useCallback((group,rowUid)=>{
+    if(!group?.rows?.length||!rowUid) return;
+    removeDuplicateRowsByUid([rowUid]);
+    const remaining=group.rows.filter(r=>r._uid!==rowUid);
+    if(remaining.length<=1) setDuplicateCompareModal(null);
+    setResolvedDuplicateKeys(prev=>({...prev,[group.key]:true}));
+  },[removeDuplicateRowsByUid]);
+
+  const purgeFileArtifacts=useCallback((fileNames)=>{
+    const drop=new Set((fileNames||[]).filter(Boolean));
+    if(!drop.size) return;
+    setVoters(prev=>prev.filter(v=>!drop.has(v.sourceFile)));
+    setLoadedFiles(prev=>{
+      const next={...prev};
+      drop.forEach(name=>{ delete next[name]; });
+      return next;
+    });
+    setLoadedFileMeta(prev=>{
+      const next={...prev};
+      drop.forEach(name=>{ delete next[name]; });
+      return next;
+    });
+  },[]);
+
+  const keepOnlyDuplicateFile=useCallback((group,keepFileName)=>{
+    if(!group?.rows?.length||!keepFileName) return;
+    const removeNames=group.rows.map(r=>r.fileName).filter(name=>name&&name!==keepFileName);
+    purgeFileArtifacts(removeNames);
+    setResolvedFileHashes(prev=>({...prev,[group.hash]:true}));
+    setDuplicateCompareModal(null);
+  },[purgeFileArtifacts]);
+
+  const removeSingleDuplicateFile=useCallback((group,fileName)=>{
+    if(!group?.rows?.length||!fileName) return;
+    purgeFileArtifacts([fileName]);
+    setResolvedFileHashes(prev=>({...prev,[group.hash]:true}));
+    const remaining=group.rows.filter(r=>r.fileName!==fileName);
+    if(remaining.length<=1) setDuplicateCompareModal(null);
+  },[purgeFileArtifacts]);
+
+  const keepNewestDuplicateRow=useCallback((group)=>{
+    const rows=(group?.rows||[]).slice().sort((a,b)=>{
+      const aTime=loadedFileMeta?.[a.sourceFile]?.importedAt||"";
+      const bTime=loadedFileMeta?.[b.sourceFile]?.importedAt||"";
+      return String(bTime).localeCompare(String(aTime));
+    });
+    if(rows[0]?._uid) keepOnlyDuplicateRow(group,rows[0]._uid);
+  },[keepOnlyDuplicateRow,loadedFileMeta]);
+
+  const keepOldestDuplicateRow=useCallback((group)=>{
+    const rows=(group?.rows||[]).slice().sort((a,b)=>{
+      const aTime=loadedFileMeta?.[a.sourceFile]?.importedAt||"";
+      const bTime=loadedFileMeta?.[b.sourceFile]?.importedAt||"";
+      return String(aTime).localeCompare(String(bTime));
+    });
+    if(rows[0]?._uid) keepOnlyDuplicateRow(group,rows[0]._uid);
+  },[keepOnlyDuplicateRow,loadedFileMeta]);
+
+  const keepNewestDuplicateFile=useCallback((group)=>{
+    const rows=(group?.rows||[]).slice().sort((a,b)=>String(b.importedAt||"").localeCompare(String(a.importedAt||"")));
+    if(rows[0]?.fileName) keepOnlyDuplicateFile(group,rows[0].fileName);
+  },[keepOnlyDuplicateFile]);
+
+  const keepOldestDuplicateFile=useCallback((group)=>{
+    const rows=(group?.rows||[]).slice().sort((a,b)=>String(a.importedAt||"").localeCompare(String(b.importedAt||"")));
+    if(rows[0]?.fileName) keepOnlyDuplicateFile(group,rows[0].fileName);
+  },[keepOnlyDuplicateFile]);
 
   const partTrendRows=useMemo(()=>{
     if(!needTrendData) return [];
@@ -5218,10 +5346,16 @@ function AppInner(){
                     <td style={{padding:"7px 8px",color:C.text}}>{g.rows.map(r=>r.fileName).join(", ")}</td>
                     <td style={{padding:"7px 8px",textAlign:"right",color:C.muted}}>{g.rows.map(r=>r.rowCount||0).join(", ")}</td>
                     <td style={{padding:"7px 8px",textAlign:"right"}}>
-                      <button onClick={()=>setResolvedFileHashes(prev=>({...prev,[g.hash]:!prev[g.hash]}))}
-                        style={{padding:"4px 8px",background:C.panel,border:`1px solid ${C.border}`,borderRadius:5,color:C.blue,fontSize:11,cursor:"pointer"}}>
-                        {resolvedFileHashes[g.hash]?"Re-open":"Resolve"}
-                      </button>
+                      <div style={{display:"inline-flex",gap:6,flexWrap:"wrap",justifyContent:"flex-end"}}>
+                        <button onClick={()=>setDuplicateCompareModal({type:"file",group:g})}
+                          style={{padding:"4px 8px",background:C.panel,border:`1px solid ${C.border}`,borderRadius:5,color:C.muted,fontSize:11,cursor:"pointer"}}>
+                          Compare
+                        </button>
+                        <button onClick={()=>setResolvedFileHashes(prev=>({...prev,[g.hash]:!prev[g.hash]}))}
+                          style={{padding:"4px 8px",background:C.panel,border:`1px solid ${C.border}`,borderRadius:5,color:C.blue,fontSize:11,cursor:"pointer"}}>
+                          {resolvedFileHashes[g.hash]?"Re-open":"Resolve"}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -5314,12 +5448,18 @@ function AppInner(){
                     <td style={{padding:"6px 8px",color:C.dim}}>{[...new Set(g.rows.map(r=>r.sourceFile))].join(", ")}</td>
                     <td style={{padding:"6px 8px",fontFamily:MONO,color:C.dim}}>{g.key}</td>
                     <td style={{padding:"6px 8px",textAlign:"right"}}>
-                      {!g.autoResolved&&(
-                        <button onClick={()=>setResolvedDuplicateKeys(prev=>({...prev,[g.key]:!prev[g.key]}))}
-                          style={{padding:"4px 8px",background:C.panel,border:`1px solid ${C.border}`,borderRadius:5,color:C.blue,fontSize:11,cursor:"pointer"}}>
-                          {g.resolved?"Re-open":"Resolve"}
+                      <div style={{display:"inline-flex",gap:6,flexWrap:"wrap",justifyContent:"flex-end"}}>
+                        <button onClick={()=>setDuplicateCompareModal({type:"row",group:g})}
+                          style={{padding:"4px 8px",background:C.panel,border:`1px solid ${C.border}`,borderRadius:5,color:C.muted,fontSize:11,cursor:"pointer"}}>
+                          Compare
                         </button>
-                      )}
+                        {!g.autoResolved&&(
+                          <button onClick={()=>setResolvedDuplicateKeys(prev=>({...prev,[g.key]:!prev[g.key]}))}
+                            style={{padding:"4px 8px",background:C.panel,border:`1px solid ${C.border}`,borderRadius:5,color:C.blue,fontSize:11,cursor:"pointer"}}>
+                            {g.resolved?"Re-open":"Resolve"}
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -6020,6 +6160,31 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
           <pre style={{fontSize:11.5,color:C.muted,lineHeight:1.9,whiteSpace:"pre-wrap",fontFamily:MONO,margin:0}}>{b}</pre>
         </Panel>
         ))}
+
+        <Panel>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,flexWrap:"wrap",marginBottom:8}}>
+            <div>
+              <div style={{fontSize:14,fontWeight:700,color:C.blue,marginBottom:6}}>📘 Full App Guide</div>
+              <div style={{fontSize:12,color:C.muted,lineHeight:1.7}}>
+                Complete usage guide for loading files, sessions, insights, tokens, review, duplicates, booths, exports, mobile behavior, and methodology.
+              </div>
+            </div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              <button onClick={()=>copyPlainText(USER_GUIDE_TEXT,"Full app guide")}
+                style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${C.border}`,background:C.panel,color:C.text,cursor:"pointer",fontSize:12}}>
+                Copy Guide
+              </button>
+              <button onClick={()=>downloadPlainTextFile("USER_GUIDE.md",USER_GUIDE_TEXT,"text/markdown;charset=utf-8")}
+                style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${C.blue}44`,background:C.blue+"22",color:C.blue,cursor:"pointer",fontSize:12,fontWeight:700}}>
+                Download Guide
+              </button>
+            </div>
+          </div>
+          <div style={{border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
+            <div style={{padding:"8px 10px",fontSize:12,fontWeight:700,color:C.text,background:C.panel}}>USER_GUIDE.md preview</div>
+            <pre style={{margin:0,padding:10,maxHeight:280,overflow:"auto",fontSize:11.5,color:C.muted,lineHeight:1.75,whiteSpace:"pre-wrap",fontFamily:MONO}}>{USER_GUIDE_TEXT.slice(0,5000)}{USER_GUIDE_TEXT.length>5000?"\n\n...[truncated in preview; download for full guide]":""}</pre>
+          </div>
+        </Panel>
 
         <Panel>
           <div style={{fontSize:14,fontWeight:700,color:C.blue,marginBottom:6}}>🧾 ECI PDF → Excel Workflow (Claude Vision)</div>
@@ -6928,6 +7093,181 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
           </div>
         </div>
       )}
+
+      {duplicateCompareModal&&(()=>{
+        const isRow=duplicateCompareModal.type==="row";
+        const items=duplicateCompareModal.group?.rows||[];
+        const fieldDefs=isRow?duplicateRowCompareFields:duplicateFileCompareFields;
+        const changed=duplicateDiffSet(items,fieldDefs);
+        return (
+        <div style={{position:"fixed",inset:0,background:"#00000088",zIndex:74,display:"flex",alignItems:"center",justifyContent:"center",padding:12}}>
+          <div style={{width:"min(1180px,96vw)",maxHeight:"92vh",overflow:"auto",background:C.panel,border:`1px solid ${C.border}`,borderRadius:12,padding:14,boxSizing:"border-box"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,flexWrap:"wrap",marginBottom:10}}>
+              <div>
+                <div style={{fontSize:16,fontWeight:800,color:C.text}}>
+                  {duplicateCompareModal.type==="row"?"Duplicate Voter Compare":"Duplicate File Compare"}
+                </div>
+                <div style={{fontSize:12,color:C.dim,marginTop:3}}>
+                  {duplicateCompareModal.type==="row"
+                    ? `Group ${duplicateCompareModal.group?.key||"—"} · ${duplicateCompareModal.group?.rows?.length||0} entries`
+                    : `Hash ${String(duplicateCompareModal.group?.hash||"").slice(0,18)}... · ${duplicateCompareModal.group?.rows?.length||0} files`}
+                </div>
+              </div>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+                <select value={duplicateCompareLayout}
+                  onChange={e=>setDuplicateCompareLayout(e.target.value)}
+                  style={{padding:"6px 8px",border:`1px solid ${C.border}`,borderRadius:6,background:C.bg,color:C.text,fontSize:12}}>
+                  <option value="side">Side by side</option>
+                  <option value="stack">One after another</option>
+                </select>
+                {changed.size>0&&(
+                  <div style={{fontSize:11,color:C.yellow,whiteSpace:"nowrap"}}>
+                    {changed.size} differing field{changed.size===1?"":"s"} highlighted
+                  </div>
+                )}
+                {duplicateCompareModal.type==="row"&&(
+                  <>
+                    <button onClick={()=>keepNewestDuplicateRow(duplicateCompareModal.group)}
+                      style={{padding:"6px 10px",background:C.blue+"22",border:`1px solid ${C.blue}44`,borderRadius:6,color:C.blue,fontSize:12,cursor:"pointer"}}>
+                      Keep Newest Import
+                    </button>
+                    <button onClick={()=>keepOldestDuplicateRow(duplicateCompareModal.group)}
+                      style={{padding:"6px 10px",background:C.panel,border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontSize:12,cursor:"pointer"}}>
+                      Keep Oldest Import
+                    </button>
+                  </>
+                )}
+                {duplicateCompareModal.type==="file"&&(
+                  <>
+                    <button onClick={()=>keepNewestDuplicateFile(duplicateCompareModal.group)}
+                      style={{padding:"6px 10px",background:C.blue+"22",border:`1px solid ${C.blue}44`,borderRadius:6,color:C.blue,fontSize:12,cursor:"pointer"}}>
+                      Keep Newest Import
+                    </button>
+                    <button onClick={()=>keepOldestDuplicateFile(duplicateCompareModal.group)}
+                      style={{padding:"6px 10px",background:C.panel,border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontSize:12,cursor:"pointer"}}>
+                      Keep Oldest Import
+                    </button>
+                  </>
+                )}
+                {duplicateCompareModal.type==="row"&&!duplicateCompareModal.group?.autoResolved&&(
+                  <button onClick={()=>setResolvedDuplicateKeys(prev=>({...prev,[duplicateCompareModal.group.key]:true}))}
+                    style={{padding:"6px 10px",background:C.green+"22",border:`1px solid ${C.green}44`,borderRadius:6,color:C.green,fontSize:12,cursor:"pointer"}}>
+                    Resolve Without Removing
+                  </button>
+                )}
+                {duplicateCompareModal.type==="file"&&(
+                  <button onClick={()=>setResolvedFileHashes(prev=>({...prev,[duplicateCompareModal.group.hash]:true}))}
+                    style={{padding:"6px 10px",background:C.green+"22",border:`1px solid ${C.green}44`,borderRadius:6,color:C.green,fontSize:12,cursor:"pointer"}}>
+                    Resolve Without Removing
+                  </button>
+                )}
+                <button onClick={()=>setDuplicateCompareModal(null)}
+                  style={{padding:"6px 10px",background:"transparent",border:`1px solid ${C.border}`,borderRadius:6,color:C.dim,fontSize:12,cursor:"pointer"}}>
+                  Close
+                </button>
+              </div>
+            </div>
+
+            {changed.size>0&&(
+              <div style={{
+                display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",
+                marginBottom:12,padding:"8px 10px",border:`1px solid ${C.yellow}44`,
+                background:C.yellow+"10",borderRadius:8
+              }}>
+                <span style={{fontSize:11,color:C.dim}}>Differing fields:</span>
+                {[...changed].map(label=>(
+                  <span key={label} style={{
+                    padding:"3px 8px",borderRadius:999,border:`1px solid ${C.yellow}55`,
+                    background:C.panel,color:C.yellow,fontSize:11,fontWeight:700
+                  }}>
+                    {label}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {duplicateCompareModal.type==="row"&&(
+              <div style={{display:"grid",gridTemplateColumns:duplicateCompareLayout==="side"?"repeat(auto-fit,minmax(320px,1fr))":"1fr",gap:12}}>
+                {(duplicateCompareModal.group?.rows||[]).map((row,idx)=>{
+                  const fileMeta=loadedFileMeta?.[row.sourceFile]||null;
+                  return (
+                    <div key={row._uid||idx} style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:10,padding:12}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginBottom:8,flexWrap:"wrap"}}>
+                        <div>
+                          <div style={{fontSize:14,fontWeight:800,color:C.text}}>{row.name||"Unnamed voter"}</div>
+                          <div style={{fontSize:11,color:C.dim,marginTop:2}}>
+                            Part {row.part_no||"—"} · Serial {row.serial_no||"—"} · Voter ID {row.voter_id||"—"}
+                          </div>
+                        </div>
+                        <Tag c={row.status||"—"} color={row.status==="Under Adjudication"?C.orange:row.status==="Deleted"?C.red:C.blue}/>
+                      </div>
+                      <div style={{display:"grid",gridTemplateColumns:"140px 1fr",gap:"6px 10px",fontSize:12,lineHeight:1.45}}>
+                        {duplicateRowCompareFields.map(([label,getter])=>(
+                          <Fragment key={label}>
+                            <div style={{color:changed.has(label)?C.yellow:C.dim,fontWeight:changed.has(label)?700:400}}>{label}</div>
+                            <div style={{color:C.text,wordBreak:"break-word",background:changed.has(label)?C.yellow+"12":"transparent",borderRadius:6,padding:changed.has(label)?"2px 6px":"0"}}>
+                              {getter(row)}
+                            </div>
+                          </Fragment>
+                        ))}
+                      </div>
+                      <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:10}}>
+                        <button onClick={()=>keepOnlyDuplicateRow(duplicateCompareModal.group,row._uid)}
+                          style={{padding:"6px 10px",background:C.green+"22",border:`1px solid ${C.green}44`,borderRadius:6,color:C.green,fontSize:12,cursor:"pointer",fontWeight:700}}>
+                          Keep This, Remove Others
+                        </button>
+                        <button onClick={()=>removeSingleDuplicateRow(duplicateCompareModal.group,row._uid)}
+                          style={{padding:"6px 10px",background:C.red+"22",border:`1px solid ${C.red}44`,borderRadius:6,color:C.red,fontSize:12,cursor:"pointer"}}>
+                          Remove This Record
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {duplicateCompareModal.type==="file"&&(
+              <div style={{display:"grid",gridTemplateColumns:duplicateCompareLayout==="side"?"repeat(auto-fit,minmax(320px,1fr))":"1fr",gap:12}}>
+                {(duplicateCompareModal.group?.rows||[]).map((meta,idx)=>(
+                  <div key={meta.fileName||idx} style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:10,padding:12}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginBottom:8,flexWrap:"wrap"}}>
+                      <div>
+                        <div style={{fontSize:14,fontWeight:800,color:C.text,wordBreak:"break-word"}}>{meta.fileName||"Unnamed file"}</div>
+                        <div style={{fontSize:11,color:C.dim,marginTop:2}}>
+                          {meta.acNo?`AC ${meta.acNo}`:"AC —"} · {meta.acName||"—"} · {Array.isArray(meta.parts)?meta.parts.length:0} parts
+                        </div>
+                      </div>
+                      <Tag c="FILE" color={C.blue}/>
+                    </div>
+                    <div style={{display:"grid",gridTemplateColumns:"140px 1fr",gap:"6px 10px",fontSize:12,lineHeight:1.45}}>
+                      {duplicateFileCompareFields.map(([label,getter])=>(
+                          <Fragment key={label}>
+                            <div style={{color:changed.has(label)?C.yellow:C.dim,fontWeight:changed.has(label)?700:400}}>{label}</div>
+                            <div style={{color:C.text,wordBreak:"break-word",background:changed.has(label)?C.yellow+"12":"transparent",borderRadius:6,padding:changed.has(label)?"2px 6px":"0"}}>
+                              {getter(meta)}
+                            </div>
+                          </Fragment>
+                      ))}
+                    </div>
+                    <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:10}}>
+                      <button onClick={()=>keepOnlyDuplicateFile(duplicateCompareModal.group,meta.fileName)}
+                        style={{padding:"6px 10px",background:C.green+"22",border:`1px solid ${C.green}44`,borderRadius:6,color:C.green,fontSize:12,cursor:"pointer",fontWeight:700}}>
+                        Keep This File, Remove Others
+                      </button>
+                      <button onClick={()=>removeSingleDuplicateFile(duplicateCompareModal.group,meta.fileName)}
+                        style={{padding:"6px 10px",background:C.red+"22",border:`1px solid ${C.red}44`,borderRadius:6,color:C.red,fontSize:12,cursor:"pointer"}}>
+                        Remove This File
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+        );
+      })()}
 
       {boothFigureSettingsOpen&&(
         <div style={{position:"fixed",inset:0,background:"#00000066",zIndex:74,display:"flex",alignItems:"center",justifyContent:"center",padding:12}}>
