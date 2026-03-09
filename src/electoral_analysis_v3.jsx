@@ -978,6 +978,7 @@ export default function App(){
   const ww=useWindowWidth();
   const mobile=ww<640;
   const tablet=ww<1024;
+  const compactViewport=ww<760;
   const [theme,setTheme]=useState(()=>{
     try{
       const t=localStorage.getItem("eim_theme");
@@ -988,6 +989,7 @@ export default function App(){
   const [overrides,setOverrides]=useState({}); // voter_id → religion
   const [loading,setLoading]=useState(false);
   const [tab,setTab]=useState("overview");
+  const [allowHeavyCharts,setAllowHeavyCharts]=useState(false);
 
   // File warnings (column errors, missing sheets)
   const [fileWarnings,setFileWarnings]=useState([]);
@@ -1054,6 +1056,34 @@ export default function App(){
   const [aiBrief,setAiBrief]=useState("");
   const [chartExportModal,setChartExportModal]=useState(null);
   const [tableExportModal,setTableExportModal]=useState(null);
+
+  useEffect(()=>{
+    if(!compactViewport){
+      setAllowHeavyCharts(true);
+      return;
+    }
+    setAllowHeavyCharts(false);
+  },[compactViewport,voters.length]);
+
+  const canRenderHeavyCharts=!compactViewport || allowHeavyCharts;
+  const renderCompactViewportNotice=(title, detail="Charts are deferred on narrow screens to keep Android Chrome stable after upload.")=>(
+    <Panel>
+      <div style={{fontSize:18,fontWeight:800,color:C.text,marginBottom:6}}>{title}</div>
+      <div style={{fontSize:12,color:C.muted,lineHeight:1.7,maxWidth:680}}>
+        {detail}
+      </div>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:12}}>
+        <button onClick={()=>setAllowHeavyCharts(true)}
+          style={{padding:"8px 12px",background:C.blue+"22",border:`1px solid ${C.blue}55`,borderRadius:8,color:C.blue,fontSize:12,cursor:"pointer",fontWeight:700}}>
+          Load Charts
+        </button>
+        <button onClick={()=>setTab("voters")}
+          style={{padding:"8px 12px",background:"transparent",border:`1px solid ${C.border}`,borderRadius:8,color:C.muted,fontSize:12,cursor:"pointer"}}>
+          Go to Voters Table
+        </button>
+      </div>
+    </Panel>
+  );
   const [chartStudioOpen,setChartStudioOpen]=useState(false);
   const [boothFigureSettingsOpen,setBoothFigureSettingsOpen]=useState(false);
   const [chartPrefs,setChartPrefs]=useState({
@@ -3156,6 +3186,9 @@ export default function App(){
     }).filter(x=>x.tot>0);
     const {mV,hV,mAdj,hAdj,mDel,hDel,chiAdj,chiDel,adjRatio,delRatio}=stats;
     const adjBarData=rows.map(r=>({name:r.r, "Adj%":r.adjR, "Del%":r.delR, total:r.tot, adj:r.a}));
+    if(!canRenderHeavyCharts){
+      return renderCompactViewportNotice("Religion charts are paused on this screen size.","Load charts only when needed, or use Voters / Booths first.");
+    }
     return(
       <div style={{display:"flex",flexDirection:"column",gap:18}}>
         <Panel>
@@ -3336,6 +3369,9 @@ export default function App(){
     const overallAdjPct=filtered.length
       ? +((filtered.filter(v=>v.status==="Under Adjudication").length/filtered.length)*100).toFixed(2)
       : 0;
+    if(!canRenderHeavyCharts){
+      return renderCompactViewportNotice("Age-cohort charts are paused on this screen size.");
+    }
     return(
       <div style={{display:"flex",flexDirection:"column",gap:18}}>
         <Panel>
@@ -3451,6 +3487,9 @@ export default function App(){
   };
 
   const renderCustomAnalytics=()=>{
+    if(!canRenderHeavyCharts){
+      return renderCompactViewportNotice("Custom analytics charts are paused on this screen size.","This builder is chart-heavy. Load charts explicitly when you want to explore it on mobile.");
+    }
     const metricKey=caMetric;
     const pctTotal=(n,d)=>d?+((n/d)*100).toFixed(2):0;
     const baseData=customAnalyticsRows.map(r=>({
@@ -3616,6 +3655,21 @@ export default function App(){
         ? `Each bar is normalized to 100%. Segments show the relative composition of ${metricLabel.toLowerCase()} by ${caStackBy}.`
         : `Each bar shows absolute contributions to ${metricLabel.toLowerCase()} within each ${caGroupBy==="part_no"?"part":caGroupBy}. Segments are split by ${caStackBy}.`
     );
+    if(!canRenderHeavyCharts){
+      return(
+        <div style={{display:"flex",flexDirection:"column",gap:16}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:10}}>
+            <StatCard label="Total Voters" value={sm.total.toLocaleString()} sub={`${parts.length} part(s) loaded`} color={C.blue}/>
+            <StatCard label="Under Adjudication" value={sm.adj} sub={pct(sm.adj,sm.total)+" of total"} color={C.adj}/>
+            <StatCard label="Deleted" value={sm.del} sub={pct(sm.del,sm.total)+" of total"} color={C.del}/>
+            <StatCard label="Muslim Adj Rate" value={pct(sm.mAdj,sm.mV)} sub={`${sm.mAdj}/${sm.mV} voters`} color={C.Muslim}/>
+            <StatCard label="Hindu Adj Rate" value={pct(sm.hAdj,sm.hV)} sub={`${sm.hAdj}/${sm.hV} voters`} color={C.Hindu}/>
+            <StatCard label="Bias Ratio" value={ratioStr(sm.mAR,sm.hAR)} sub="Muslim÷Hindu adj rate" color={sm.adjRatio>2?C.adj:C.green}/>
+          </div>
+          {renderCompactViewportNotice("Overview charts are paused on this screen size.")}
+        </div>
+      );
+    }
     return(
       <div style={{display:"flex",flexDirection:"column",gap:16}}>
         <Panel>
@@ -3811,6 +3865,9 @@ export default function App(){
   };
 
   const renderTrends=()=>{
+    if(!canRenderHeavyCharts){
+      return renderCompactViewportNotice("Trend charts are paused on this screen size.");
+    }
     const topFlags=[...partTrendRows].filter(r=>r.fdrSig).sort((a,b)=>Math.abs(b.diffPct)-Math.abs(a.diffPct)).slice(0,20);
     const dimKeys=partBarsSplit==="religion"
       ?["Muslim","Hindu","Uncertain","Unknown"]
