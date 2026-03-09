@@ -77,6 +77,7 @@ const THEME_LIGHT = {
 const C = { ...THEME_DARK };
 const FONT="'Inter','Segoe UI',sans-serif";
 const MONO="'JetBrains Mono','Fira Code','Courier New',monospace";
+const CHART_RELIGIONS=["Muslim","Hindu"];
 const CLAUDE_VOLUNTEER_MESSAGE=`SIR এর বিষয়ে কিছু হেল্প করতে পারেন বিনামূল্যে মাত্র 5 মিনিট ব্যয় করে।
 
 প্রথমে Claude অ্যাপ ইন্সটল করুন
@@ -3212,7 +3213,7 @@ function AppInner(){
 
   // ── TAB: OVERVIEW ───────────────────────────────────────────────────────────
   const renderOverview=()=>{
-    const relBarData=["Muslim","Hindu","Uncertain"].map(r=>{
+    const relBarData=CHART_RELIGIONS.map(r=>{
       const rv=filtered.filter(v=>effRel(v)===r);
       const adj=rv.filter(v=>v.status==="Under Adjudication").length;
       const del=rv.filter(v=>v.status==="Deleted").length;
@@ -3224,7 +3225,7 @@ function AppInner(){
         total:rv.length,
       };
     });
-    const adjPie=["Muslim","Hindu","Uncertain","Unknown"].map(r=>({
+    const adjPie=CHART_RELIGIONS.map(r=>({
       name:r,value:filtered.filter(v=>v.status==="Under Adjudication"&&effRel(v)===r).length
     })).filter(d=>d.value>0);
     const sm=stats;
@@ -3413,7 +3414,7 @@ function AppInner(){
 
   // ── TAB: RELIGION ───────────────────────────────────────────────────────────
   const renderReligion=()=>{
-    const rows=["Muslim","Hindu","Uncertain","Unknown"].map(r=>{
+    const rows=CHART_RELIGIONS.map(r=>{
       const rv=filtered.filter(v=>effRel(v)===r);
       const a=rv.filter(v=>v.status==="Under Adjudication").length;
       const d=rv.filter(v=>v.status==="Deleted").length;
@@ -3770,7 +3771,7 @@ function AppInner(){
       let keys={};
       if(caMetric==="total"){
         if(caStackBy==="religion"){
-          keys={Muslim:r.m||0,Hindu:r.h||0,Uncertain:r.u||0};
+          keys={Muslim:r.m||0,Hindu:r.h||0};
         }else if(caStackBy==="gender"){
           keys={Male:r.male||0,Female:r.female||0,Other:r.other||0};
         }else{
@@ -3778,7 +3779,7 @@ function AppInner(){
         }
       }else if(caMetric==="adj_rate"){
         if(caStackBy==="religion"){
-          keys={Muslim:pctTotal(r.mAdj,r.total),Hindu:pctTotal(r.hAdj,r.total),Uncertain:pctTotal(r.uAdj,r.total)};
+          keys={Muslim:pctTotal(r.mAdj,r.total),Hindu:pctTotal(r.hAdj,r.total)};
         }else if(caStackBy==="gender"){
           keys={Male:pctTotal(r.maleAdj,r.total),Female:pctTotal(r.femaleAdj,r.total),Other:pctTotal(r.otherAdj,r.total)};
         }else{
@@ -3786,7 +3787,7 @@ function AppInner(){
         }
       }else if(caMetric==="del_rate"){
         if(caStackBy==="religion"){
-          keys={Muslim:pctTotal(r.mDel,r.total),Hindu:pctTotal(r.hDel,r.total),Uncertain:pctTotal(r.uDel,r.total)};
+          keys={Muslim:pctTotal(r.mDel,r.total),Hindu:pctTotal(r.hDel,r.total)};
         }else if(caStackBy==="gender"){
           keys={Male:pctTotal(r.maleDel,r.total),Female:pctTotal(r.femaleDel,r.total),Other:pctTotal(r.otherDel,r.total)};
         }else{
@@ -3794,13 +3795,13 @@ function AppInner(){
         }
       }else if(caMetric==="muslim_share"){
         if(caStackBy==="religion"){
-          keys={Muslim:pctTotal(r.m,r.total),Hindu:pctTotal(r.h,r.total),Uncertain:pctTotal(r.u,r.total)};
+          keys={Muslim:pctTotal(r.m,r.total),Hindu:pctTotal(r.h,r.total)};
         }else{
           keys={Active:pctTotal(r.mActive,r.total),"Under Adj":pctTotal(r.mAdj,r.total),Deleted:pctTotal(r.mDel,r.total)};
         }
       }else if(caMetric==="hindu_share"){
         if(caStackBy==="religion"){
-          keys={Muslim:pctTotal(r.m,r.total),Hindu:pctTotal(r.h,r.total),Uncertain:pctTotal(r.u,r.total)};
+          keys={Muslim:pctTotal(r.m,r.total),Hindu:pctTotal(r.h,r.total)};
         }else{
           keys={Active:pctTotal(r.hActive,r.total),"Under Adj":pctTotal(r.hAdj,r.total),Deleted:pctTotal(r.hDel,r.total)};
         }
@@ -3819,7 +3820,7 @@ function AppInner(){
       hindu_share:"Hindu Share %",
     }[caMetric]||caMetric;
     const stackKeys=caStackBy==="religion"
-      ?["Muslim","Hindu","Uncertain"]
+      ?CHART_RELIGIONS
       :caStackBy==="gender"
         ?["Male","Female","Other"]
         :["Active","Under Adj","Deleted"];
@@ -3829,33 +3830,32 @@ function AppInner(){
       Deleted:chartColor.Deleted,
       Muslim:chartColor.Muslim,
       Hindu:chartColor.Hindu,
-      Uncertain:C.Uncertain,
       Male:C.blue,
       Female:C.Hindu,
       Other:C.dim,
     };
     const stackLabels=(()=>{
       if(caMetric==="total"){
-        if(caStackBy==="religion") return {Muslim:"Muslim voters",Hindu:"Hindu voters",Uncertain:"Uncertain voters"};
+        if(caStackBy==="religion") return {Muslim:"Muslim voters",Hindu:"Hindu voters"};
         if(caStackBy==="gender") return {Male:"Male voters",Female:"Female voters",Other:"Other-gender voters"};
         return {Active:"Active voters","Under Adj":"Under adjudication",Deleted:"Deleted voters"};
       }
       if(caMetric==="adj_rate"){
-        if(caStackBy==="religion") return {Muslim:"Muslim contribution to adj %",Hindu:"Hindu contribution to adj %",Uncertain:"Uncertain contribution to adj %"};
+        if(caStackBy==="religion") return {Muslim:"Muslim contribution to adj %",Hindu:"Hindu contribution to adj %"};
         if(caStackBy==="gender") return {Male:"Male contribution to adj %",Female:"Female contribution to adj %",Other:"Other contribution to adj %"};
         return {Active:"Active share","Under Adj":"Under adjudication rate",Deleted:"Deleted share"};
       }
       if(caMetric==="del_rate"){
-        if(caStackBy==="religion") return {Muslim:"Muslim contribution to del %",Hindu:"Hindu contribution to del %",Uncertain:"Uncertain contribution to del %"};
+        if(caStackBy==="religion") return {Muslim:"Muslim contribution to del %",Hindu:"Hindu contribution to del %"};
         if(caStackBy==="gender") return {Male:"Male contribution to del %",Female:"Female contribution to del %",Other:"Other contribution to del %"};
         return {Active:"Active share","Under Adj":"Under adjudication share",Deleted:"Deletion rate"};
       }
       if(caMetric==="muslim_share"){
-        if(caStackBy==="religion") return {Muslim:"Muslim share",Hindu:"Non-Muslim Hindu share",Uncertain:"Non-Muslim uncertain share"};
+        if(caStackBy==="religion") return {Muslim:"Muslim share",Hindu:"Non-Muslim Hindu share"};
         return {Active:"Muslim active share","Under Adj":"Muslim UA share",Deleted:"Muslim deleted share"};
       }
       if(caMetric==="hindu_share"){
-        if(caStackBy==="religion") return {Muslim:"Non-Hindu Muslim share",Hindu:"Hindu share",Uncertain:"Non-Hindu uncertain share"};
+        if(caStackBy==="religion") return {Muslim:"Non-Hindu Muslim share",Hindu:"Hindu share"};
         return {Active:"Hindu active share","Under Adj":"Hindu UA share",Deleted:"Hindu deleted share"};
       }
       return {};
@@ -4109,13 +4109,11 @@ function AppInner(){
     }
     const topFlags=[...partTrendRows].filter(r=>r.fdrSig).sort((a,b)=>Math.abs(b.diffPct)-Math.abs(a.diffPct)).slice(0,20);
     const dimKeys=partBarsSplit==="religion"
-      ?["Muslim","Hindu","Uncertain","Unknown"]
+      ?CHART_RELIGIONS
       :["18–22","23–30","31–39","40–44★","45–60","60+","Unknown"];
     const dimColor=(k)=>{
       if(k==="Muslim") return chartColor.Muslim;
       if(k==="Hindu") return chartColor.Hindu;
-      if(k==="Uncertain") return C.Uncertain;
-      if(k==="Unknown") return C.Unknown;
       if(k==="18–22") return "#06b6d4";
       if(k==="23–30") return "#22c55e";
       if(k==="31–39") return "#3b82f6";
