@@ -382,83 +382,26 @@ const BiasBadge=({r})=>{
   return <Tag c={`${rn.toFixed(2)}x REV`} color="#a78bfa" bg="#a78bfa22"/>;
 };
 const TT={contentStyle:{background:C.bg,border:`1px solid ${C.border}`,borderRadius:8,fontSize:12,color:C.text,fontFamily:FONT}};
-const ResizableChartFrame=({height=220,minHeight=160,minWidth=280,style={},children})=>{
-  const ref=useRef(null);
-  const rafRef=useRef(null);
-  const settleRef=useRef(null);
-  const pendingSizeRef=useRef({width:null,height});
-  const [size,setSize]=useState({width:null,height});
-
-  useEffect(()=>{
-    setSize(prev=>prev.width===null && prev.height===height ? prev : {...prev,height:prev.width===null?height:prev.height});
-  },[height]);
-
-  useEffect(()=>{
-    const node=ref.current;
-    if(!node) return;
-    const syncDataset=(widthValue,heightValue)=>{
-      node.dataset.exportWidth=String(Math.max(minWidth,Math.round(widthValue||minWidth)));
-      node.dataset.exportHeight=String(Math.max(minHeight,Math.round(heightValue||height||minHeight)));
-    };
-    const commitSettledSize=(widthValue,heightValue)=>{
-      const nextWidth=Math.max(minWidth,Math.round(widthValue||minWidth));
-      const nextHeight=Math.max(minHeight,Math.round(heightValue||height||minHeight));
-      setSize(prev=>{
-        if(prev.width===nextWidth && prev.height===nextHeight) return prev;
-        return {width:nextWidth,height:nextHeight};
-      });
-    };
-    const initialWidth=Math.round(node.getBoundingClientRect().width||node.clientWidth||minWidth);
-    const initialHeight=Math.round(node.getBoundingClientRect().height||node.clientHeight||height||minHeight);
-    pendingSizeRef.current={width:initialWidth,height:initialHeight};
-    syncDataset(initialWidth,initialHeight);
-    const ro=new ResizeObserver(entries=>{
-      const box=entries?.[0]?.contentRect;
-      if(!box) return;
-      if(rafRef.current) cancelAnimationFrame(rafRef.current);
-      rafRef.current=requestAnimationFrame(()=>{
-        const nextWidth=Math.max(minWidth,Math.round(box.width||minWidth));
-        const nextHeight=Math.max(minHeight,Math.round(box.height||height||minHeight));
-        pendingSizeRef.current={width:nextWidth,height:nextHeight};
-        syncDataset(nextWidth,nextHeight);
-        if(settleRef.current) clearTimeout(settleRef.current);
-        settleRef.current=setTimeout(()=>{
-          commitSettledSize(nextWidth,nextHeight);
-        },90);
-      });
-    });
-    ro.observe(node);
-    return ()=>{
-      ro.disconnect();
-      if(rafRef.current) cancelAnimationFrame(rafRef.current);
-      if(settleRef.current) clearTimeout(settleRef.current);
-    };
-  },[height,minHeight,minWidth]);
-
-  return(
-    <div
-      ref={ref}
-      style={{
-        width:size.width?`${size.width}px`:"100%",
-        maxWidth:"100%",
-        height:size.height,
-        minHeight,
-        minWidth,
-        resize:"both",
-        overflow:"hidden",
-        boxSizing:"border-box",
-        ...style,
-      }}
-      data-export-sizable="true"
-      data-export-width={size.width||""}
-      data-export-height={size.height||""}
-    >
-      <ResponsiveContainer width="100%" height="100%">
-        {children}
-      </ResponsiveContainer>
-    </div>
-  );
-};
+const ResizableChartFrame=({height=220,minHeight=160,minWidth=280,style={},children})=>(
+  <div
+    style={{
+      width:"100%",
+      maxWidth:"100%",
+      height,
+      minHeight,
+      minWidth,
+      resize:"both",
+      overflow:"hidden",
+      boxSizing:"border-box",
+      ...style,
+    }}
+    data-export-sizable="true"
+  >
+    <ResponsiveContainer width="100%" height="100%">
+      {children}
+    </ResponsiveContainer>
+  </div>
+);
 
 function measureExportBox(el, fallbackWidth=1200, fallbackHeight=520){
   if(!el) return {width:fallbackWidth,height:fallbackHeight};
