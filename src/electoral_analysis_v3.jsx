@@ -385,40 +385,53 @@ const TT={contentStyle:{background:C.bg,border:`1px solid ${C.border}`,borderRad
 const ResizableChartFrame=({height=220,minHeight=160,minWidth=280,style={},children})=>{
   const ref=useRef(null);
   const rafRef=useRef(null);
+  const settleRef=useRef(null);
+  const pendingSizeRef=useRef({width:null,height});
   const [size,setSize]=useState({width:null,height});
 
   useEffect(()=>{
-    setSize(prev=>prev.height===height?prev:{...prev,height});
+    setSize(prev=>prev.width===null && prev.height===height ? prev : {...prev,height:prev.width===null?height:prev.height});
   },[height]);
 
   useEffect(()=>{
     const node=ref.current;
     if(!node) return;
-    let cancelled=false;
-    const commitSize=(width,heightValue)=>{
-      if(cancelled) return;
+    const syncDataset=(widthValue,heightValue)=>{
+      node.dataset.exportWidth=String(Math.max(minWidth,Math.round(widthValue||minWidth)));
+      node.dataset.exportHeight=String(Math.max(minHeight,Math.round(heightValue||height||minHeight)));
+    };
+    const commitSettledSize=(widthValue,heightValue)=>{
+      const nextWidth=Math.max(minWidth,Math.round(widthValue||minWidth));
+      const nextHeight=Math.max(minHeight,Math.round(heightValue||height||minHeight));
       setSize(prev=>{
-        const nextWidth=Math.max(minWidth,Math.round(width||prev.width||minWidth));
-        const nextHeight=Math.max(minHeight,Math.round(heightValue||prev.height||height||minHeight));
         if(prev.width===nextWidth && prev.height===nextHeight) return prev;
         return {width:nextWidth,height:nextHeight};
       });
     };
     const initialWidth=Math.round(node.getBoundingClientRect().width||node.clientWidth||minWidth);
-    commitSize(initialWidth,size.height||height);
+    const initialHeight=Math.round(node.getBoundingClientRect().height||node.clientHeight||height||minHeight);
+    pendingSizeRef.current={width:initialWidth,height:initialHeight};
+    syncDataset(initialWidth,initialHeight);
     const ro=new ResizeObserver(entries=>{
       const box=entries?.[0]?.contentRect;
       if(!box) return;
       if(rafRef.current) cancelAnimationFrame(rafRef.current);
       rafRef.current=requestAnimationFrame(()=>{
-        commitSize(box.width,box.height);
+        const nextWidth=Math.max(minWidth,Math.round(box.width||minWidth));
+        const nextHeight=Math.max(minHeight,Math.round(box.height||height||minHeight));
+        pendingSizeRef.current={width:nextWidth,height:nextHeight};
+        syncDataset(nextWidth,nextHeight);
+        if(settleRef.current) clearTimeout(settleRef.current);
+        settleRef.current=setTimeout(()=>{
+          commitSettledSize(nextWidth,nextHeight);
+        },90);
       });
     });
     ro.observe(node);
     return ()=>{
-      cancelled=true;
       ro.disconnect();
       if(rafRef.current) cancelAnimationFrame(rafRef.current);
+      if(settleRef.current) clearTimeout(settleRef.current);
     };
   },[height,minHeight,minWidth]);
 
@@ -478,13 +491,13 @@ function measureExportBox(el, fallbackWidth=1200, fallbackHeight=520){
   });
   if(sizable.length===1){
     return {
-      width:Math.max(400,fallbackWidth,widths[0]||0),
-      height:Math.max(240,fallbackHeight,heights[0]||0),
+      width:Math.max(360,widths[0]||rootWidth||fallbackWidth),
+      height:Math.max(220,heights[0]||rootHeight||fallbackHeight),
     };
   }
   return {
-    width:Math.max(400,fallbackWidth,rootWidth,...widths),
-    height:Math.max(240,fallbackHeight,rootHeight,...heights),
+    width:Math.max(400,rootWidth||fallbackWidth,...widths),
+    height:Math.max(240,rootHeight||fallbackHeight,...heights),
   };
 }
 
@@ -2860,8 +2873,8 @@ export default function App(){
   const openChartExport=useCallback((cfg)=>{
     const el=cfg?.containerId?document.getElementById(cfg.containerId):null;
     const measured=measureExportBox(el,1200,520);
-    const autoWidth=Math.max(700,measured.width);
-    const autoHeight=Math.max(380,measured.height);
+    const autoWidth=Math.max(420,measured.width);
+    const autoHeight=Math.max(260,measured.height);
     const reg=EXPORT_REGISTRY.find(r=>r.containerId===cfg?.containerId);
     const acNo=voters[0]?.ac_no||"-";
     const acName=voters[0]?.ac_name||"-";
@@ -2887,13 +2900,13 @@ export default function App(){
     const tableEl=el?.querySelector?.("table");
     const measured=measureExportBox(el,1200,520);
     const autoWidth=Math.max(
-      760,
+      520,
       measured.width,
       Math.round(tableEl?.scrollWidth||0),
       Math.round(tableEl?.getBoundingClientRect?.().width||0),
     );
     const autoHeight=Math.max(
-      260,
+      220,
       measured.height,
       Math.round(tableEl?.scrollHeight||0),
       Math.round(tableEl?.getBoundingClientRect?.().height||0),
