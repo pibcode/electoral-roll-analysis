@@ -157,6 +157,114 @@ const THEME_LIGHT = {
 const C = { ...THEME_DARK };
 const FONT="'Inter','Segoe UI',sans-serif";
 const MONO="'JetBrains Mono','Fira Code','Courier New',monospace";
+const CLAUDE_VOLUNTEER_MESSAGE=`SIR এর বিষয়ে কিছু হেল্প করতে পারেন বিনামূল্যে মাত্র 5 মিনিট ব্যয় করে।
+
+প্রথমে Claude অ্যাপ ইন্সটল করুন
+
+https://play.google.com/store/apps/details?id=com.anthropic.claude
+
+বা claude.ai সাইটটি ভিজিট করে একাউন্ট বানান। Login with Google অপশন ব্যবহার করতে পারেন।
+
+এরপর আপনার বিধানসভার অন্তত একটি বুথের ফাইনাল লিস্ট ডাউনলোড করুন এই লিংক থেকে। অবশ্যই ENGLISH অপশন বেছে নেবেন।
+
+https://voters.eci.gov.in/download-eroll?stateCode=S25
+
+এরপর নিচে দেওয়া লেখাটি কপি করে Claude এর chatbox এ পেস্ট করুন। + বাটন টিপে Files option টিপে ভোটার লিস্টটি সিলেক্ট করুন। এরপর কমলা ⬆️ বাটনটি টিপে দিলেই কাজ শুরু। এই অবস্থায় অ্যাপ মিনিমাইজ করে অন্য কাজ করতে পারেন। কিছুক্ষন পর এক্সেল ফাইলটি তৈরি হয়ে গেলে ডাউনলোড বাটন টিপে দিলেই কাজ শেষ।
+
+এক্সেল ফাইলটি আমাদের পাঠিয়ে দিন।
+
+Send files to:
+- wbsir2025@gmail.com
+- wbsir2026@gmail.com`;
+const CLAUDE_EXTRACTION_PROMPT=`I have a West Bengal Electoral Roll image based PDF. First two pages contain booth details. Last page is summary. From page 3 the voter details are in the form of cards (maximum three columns and ten rows). Extract all voter entries (stamped and unstamped) into an XLSX using your vision.
+
+STEP 1 - Read the cover page
+Extract once and apply to every row:
+* ac_no - number before the hyphen in the AC name field (e.g. "287 - NANOOR (SC)" -> 287)
+* ac_name - name after the hyphen, without reservation brackets (e.g. -> NANOOR)
+* part_no - value next to "Part No." top-right of the header table
+
+STEP 2 - Skip non-voter pages
+Process only pages with voter boxes. Skip: cover, maps, photos, blank, List of Additions, List of Deletions, Summary of Electors.
+
+STEP 3 - Extract every voter box
+Field Source
+ac_no, ac_name, part_no Cover page - same for all rows
+serial_no Top-left of box
+voter_id Top-right of box (formats: AEM1234567 / LVD1234567 / WB/41/284/051234 / IIX1234567 etc.)
+name "Name :" label
+relation_type Father / Husband / Mother / Guardian / Other
+relation_name Name following relation label
+house_no "House Number :" label
+age "Age :" label
+gender Male / Female / Other
+page_no Printed footer bottom-right e.g. "Total Pages 47 - Page 11" -> 11
+stamp_type See Step 4
+
+STEP 4 - Stamp detection
+Inspect every box for a diagonal stamp:
+* UNDER ADJUDICATION - stamp text reads "ADJUDICATION"
+* DELETED - stamp text reads "DELETED" or serial number has a "Q" prefix
+* blank - no stamp
+Stamps are diagonal and may obscure text. Extract all other fields as fully as possible from readable portions.
+
+STEP 5 - XLSX output
+Sheet 1 - "Voter Roll"
+* Columns in order: ac_no, ac_name, part_no, serial_no, voter_id, name, relation_type, relation_name, house_no, age, gender, page_no, stamp_type
+* Widths: ac_no=8, ac_name=16, part_no=8, serial_no=10, voter_id=22, name=28, relation_type=14, relation_name=30, house_no=12, age=6, gender=8, page_no=9, stamp_type=22
+* Header: dark blue (#1F3864), white bold Arial 10pt, height 22
+* Rows: alternating white / light blue (#D6E4F0), Arial 10pt
+* stamp_type cell: red fill (#FF0000) + white bold text if UNDER ADJUDICATION or DELETED
+* All cells: thin black border, freeze top row
+
+Sheet 2 - "Summary"
+* Source filename, AC No, AC Name, Part No
+* Formula-based counts: total entries, UNDER ADJUDICATION, DELETED, unstamped
+* Same formatting as Sheet 1
+
+STEP 6 - Verify before saving
+* No unexpected gaps in serial_no sequence
+* No blank voter_id values
+* ac_no / ac_name / part_no identical in every row
+* stamp_type contains only "UNDER ADJUDICATION", "DELETED", or blank
+* Total rows match "Net Electors -> Total" on the cover page - flag any discrepancy
+
+Notes:
+* Never hardcode AC name, number or part - always read from the cover page
+* Never skip a voter box
+* Leave fields blank if genuinely unreadable - do not guess
+* Always use the printed footer page number, never the PDF page index
+Don't overthink. The filename should be VoterRoll_{AC No}_{AC Name}_Part{part_no}.xlsx`;
+const INSIGHTS_SCHEMA_VERSION="eim_insights.v1";
+const INSIGHTS_SHEETS={
+  meta:"Insights_Metadata",
+  part:"Part_Insights",
+  ac:"AC_Insights",
+  religionStatus:"Religion_x_Status",
+  ageReligion:"Age_x_Religion",
+  ageStatus:"Age_x_Status",
+};
+
+async function copyPlainText(text, label="Text"){
+  try{
+    if(navigator?.clipboard?.writeText){
+      await navigator.clipboard.writeText(text);
+    }else{
+      const ta=document.createElement("textarea");
+      ta.value=text;
+      ta.setAttribute("readonly","");
+      ta.style.position="fixed";
+      ta.style.left="-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+    window.alert(`${label} copied.`);
+  }catch(err){
+    window.alert(`Copy failed: ${err?.message||"unknown error"}`);
+  }
+}
 
 function useWindowWidth(){
   const [w,setW]=useState(typeof window!=="undefined"?window.innerWidth:1200);
@@ -413,8 +521,172 @@ function exportChartPng(containerId, filename="chart.png"){
   exportChartGraphic({containerId,filename:base,format:"png"}).catch(e=>window.alert(`Chart export failed: ${e?.message||"unknown error"}`));
 }
 
+async function exportTableGraphic({
+  containerId,
+  filename="table_export",
+  format="png",
+  width,
+  height,
+  scale=2,
+  background="#ffffff",
+  title="",
+  subtitle="",
+  note="",
+  includeTimestamp=true,
+  borderMode="auto",
+}){
+  const el=document.getElementById(containerId);
+  if(!el) throw new Error(`Table container not found: ${containerId}`);
+  const safeName=(String(filename||"table_export").replace(/[<>:"/\\|?*\x00-\x1F]/g," ").trim()||"table_export");
+  const bg=normalizeHexColor(background,"#ffffff");
+  const sourceTable=el.querySelector("table");
+  const baseWidth=Math.max(
+    520,
+    Math.round(width||0),
+    Math.round(sourceTable?.scrollWidth||0),
+    Math.round(el.scrollWidth||0),
+    Math.round(sourceTable?.getBoundingClientRect?.().width||0),
+    Math.round(el.getBoundingClientRect().width||0),
+  );
+  const baseHeight=Math.max(
+    180,
+    Math.round(height||0),
+    Math.round(sourceTable?.scrollHeight||0),
+    Math.round(el.scrollHeight||0),
+    Math.round(sourceTable?.getBoundingClientRect?.().height||0),
+    Math.round(el.getBoundingClientRect().height||0),
+  );
+  const textPrimary=isDarkHexColor(bg)?"#e2e8f0":"#0f172a";
+  const textSecondary=isDarkHexColor(bg)?"#94a3b8":"#334155";
+  const textMuted=isDarkHexColor(bg)?"#64748b":"#64748b";
+  const headerHeight=(title||subtitle||note||includeTimestamp)?110:0;
+  const ts=includeTimestamp?`Generated: ${new Date().toLocaleString()}`:"";
+
+  const host=document.createElement("div");
+  host.style.position="fixed";
+  host.style.left="-100000px";
+  host.style.top="0";
+  host.style.padding="0";
+  host.style.margin="0";
+  host.style.background=bg;
+  host.style.zIndex="-1";
+  host.style.width=`${baseWidth}px`;
+  host.style.display="inline-block";
+
+  const clone=el.cloneNode(true);
+  clone.style.width=`${baseWidth}px`;
+  clone.style.maxWidth="none";
+  clone.style.height="auto";
+  clone.style.maxHeight="none";
+  clone.style.overflow="visible";
+  clone.style.background=bg;
+  clone.style.padding="0";
+  clone.style.margin="0";
+  clone.querySelectorAll("*").forEach(node=>{
+    node.style.maxHeight="none";
+    if(node.style.overflowX) node.style.overflowX="visible";
+    if(node.style.overflowY) node.style.overflowY="visible";
+  });
+  clone.querySelectorAll("table").forEach(tbl=>{
+    tbl.style.width=`${baseWidth}px`;
+    tbl.style.minWidth=`${baseWidth}px`;
+    tbl.style.maxWidth="none";
+    tbl.style.tableLayout="auto";
+    tbl.style.borderCollapse="collapse";
+    tbl.style.background=bg;
+  });
+  const resolvedBorderMode=borderMode==="auto"?"bordered":borderMode;
+  clone.querySelectorAll("th,td").forEach(cell=>{
+    cell.style.whiteSpace="nowrap";
+    cell.style.overflow="visible";
+    cell.style.textOverflow="clip";
+    cell.style.padding=cell.tagName==="TH"?"8px 10px":"7px 10px";
+    if(resolvedBorderMode==="clean"){
+      cell.style.border="none";
+      cell.style.borderBottom=`1px solid ${isDarkHexColor(bg)?"#1f2937":"#dbe4ee"}`;
+    }else{
+      cell.style.border=`1px solid ${isDarkHexColor(bg)?"#334155":"#cbd5e1"}`;
+    }
+  });
+  clone.querySelectorAll("thead tr").forEach(row=>{
+    row.style.background=isDarkHexColor(bg)?"#0f172a":"#f8fafc";
+  });
+  host.appendChild(clone);
+  document.body.appendChild(host);
+
+  try{
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    if(document?.fonts?.ready){ try{ await document.fonts.ready; }catch{} }
+    const captureWidth=Math.max(baseWidth,Math.round(clone.scrollWidth||baseWidth));
+    const captureHeight=Math.max(baseHeight,Math.round(clone.scrollHeight||baseHeight));
+
+    if(format==="svg"){
+      const dataUrl=await toSvg(clone,{
+        cacheBust:true,
+        backgroundColor:bg,
+        width:captureWidth,
+        height:captureHeight,
+        pixelRatio:1,
+      });
+      const a=document.createElement("a");
+      a.download=`${safeName}.svg`;
+      a.href=dataUrl;
+      a.click();
+      return;
+    }
+
+    const tablePng=await toPng(clone,{
+      cacheBust:true,
+      backgroundColor:bg,
+      width:captureWidth,
+      height:captureHeight,
+      canvasWidth:Math.max(1,Math.round(captureWidth*scale)),
+      canvasHeight:Math.max(1,Math.round(captureHeight*scale)),
+      pixelRatio:1,
+    });
+
+    const canvas=document.createElement("canvas");
+    canvas.width=Math.max(1,Math.round(captureWidth*scale));
+    canvas.height=Math.max(1,Math.round((captureHeight+headerHeight)*scale));
+    const ctx=canvas.getContext("2d");
+    if(!ctx) throw new Error("Canvas context unavailable");
+    ctx.fillStyle=bg;
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+
+    const img=new Image();
+    await new Promise((resolve,reject)=>{
+      img.onload=resolve;
+      img.onerror=reject;
+      img.src=tablePng;
+    });
+
+    const hdrPx=Math.round(headerHeight*scale);
+    if(headerHeight>0){
+      ctx.fillStyle=textPrimary;
+      ctx.font=`${Math.round(22*scale/2)}px Inter, Segoe UI, sans-serif`;
+      if(title) ctx.fillText(String(title),Math.round(18*scale),Math.round(28*scale));
+      ctx.fillStyle=textSecondary;
+      ctx.font=`${Math.round(13*scale/2)}px Inter, Segoe UI, sans-serif`;
+      if(subtitle) ctx.fillText(String(subtitle),Math.round(18*scale),Math.round(48*scale));
+      if(note||ts){
+        ctx.fillStyle=textMuted;
+        ctx.font=`${Math.round(11*scale/2)}px Inter, Segoe UI, sans-serif`;
+        ctx.fillText([note,ts].filter(Boolean).join(" | "),Math.round(18*scale),Math.round(66*scale));
+      }
+    }
+    ctx.drawImage(img,0,hdrPx,Math.round(captureWidth*scale),Math.round(captureHeight*scale));
+
+    const a=document.createElement("a");
+    a.download=`${safeName}.png`;
+    a.href=canvas.toDataURL("image/png");
+    a.click();
+  } finally {
+    document.body.removeChild(host);
+  }
+}
+
 function exportTableImage(containerId, filename="table_export", meta={}){
-  return exportChartGraphic({
+  return exportTableGraphic({
     containerId,
     filename,
     format:"png",
@@ -424,6 +696,7 @@ function exportTableImage(containerId, filename="table_export", meta={}){
     subtitle:meta.subtitle||"",
     note:meta.note||"Table capture",
     includeTimestamp:meta.includeTimestamp!==false,
+    borderMode:meta.borderMode||"auto",
   });
 }
 
@@ -543,6 +816,37 @@ function exportFullDataset(voters) {
   }
 }
 
+function exportFilteredDatasetWorkbook(voters, meta={}){
+  if(!Array.isArray(voters)||voters.length===0){
+    window.alert("No voters available in the current filtered view.");
+    return;
+  }
+  try{
+    const wb=XLSX.utils.book_new();
+    const sample=voters[0]||{};
+    const filters=meta.filters||{};
+    const summary=[{
+      "Generated At": new Date().toISOString(),
+      "AC No": sample.ac_no||"",
+      "AC Name": sample.ac_name||"",
+      "Rows Exported": voters.length,
+      "Part Filter": filters.part||"All Parts",
+      "Status Filter": filters.status||"All Statuses",
+      "Religion Filter": filters.religion||"All Religions",
+      "Age Filter": filters.age||"All Ages",
+      "Gender Filter": filters.gender||"All Genders",
+      "Search Query": filters.search||"",
+      "Scope": meta.scope||"Filtered voter export",
+    }];
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(summary),"Export_Metadata");
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(voters.map(v=>toExportRow(v))),"Filtered_Voters");
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(buildSummaryRows(voters)),"Filtered_Parts");
+    XLSX.writeFile(wb,sanitizeFileName(meta.filename||`FilteredVoters_${new Date().toISOString().slice(0,10)}.xlsx`),{compression:true});
+  }catch(err){
+    window.alert(`Export failed: ${err?.message||"unknown error"}`);
+  }
+}
+
 function toExportRow(v){
   return {
     "AC No": v.ac_no||"",
@@ -598,6 +902,149 @@ function duplicateKeyOf(v){
   const serial=String(v.serial_no??"").trim();
   const name=String(v.name??"").trim().toUpperCase();
   return `${part}|${serial}|${name}`;
+}
+
+function exactDuplicateSignatureOf(v){
+  return JSON.stringify({
+    ac_no:String(v.ac_no??"").trim(),
+    ac_name:String(v.ac_name??"").trim(),
+    part_no:String(v.part_no??"").trim(),
+    serial_no:String(v.serial_no??"").trim(),
+    voter_id:String(v.voter_id??"").trim().toUpperCase(),
+    name:String(v.name??"").trim().toUpperCase(),
+    relation_type:String(v.relation_type??"").trim(),
+    relation_name:String(v.relation_name??"").trim().toUpperCase(),
+    house_no:String(v.house_no??"").trim(),
+    age:String(v.age??"").trim(),
+    gender:String(v.gender??"").trim().toUpperCase(),
+    page_no:String(v.page_no??"").trim(),
+    status:String(v.status??"").trim(),
+    religion:String(v.religion??"").trim(),
+  });
+}
+
+function buildInsightsWorkbookData(voters){
+  const rows=Array.isArray(voters)?voters:[];
+  const parts=[...new Set(rows.map(v=>String(v.part_no||"").trim()).filter(Boolean))].sort((a,b)=>(+a||0)-(+b||0));
+  const acKeys=[...new Set(rows.map(v=>`${String(v.ac_no||"").trim()}|${String(v.ac_name||"").trim()}`))];
+  const getRel=v=>v.override||v.religion||"Unknown";
+  const ageBuckets=["18–22","23–30","31–39","40–44★","45–60","60+","Unknown"];
+  const partInsights=parts.map(pt=>{
+    const pv=rows.filter(v=>String(v.part_no||"").trim()===pt);
+    const sample=pv[0]||{};
+    const statusCount=(s)=>pv.filter(v=>v.status===s).length;
+    const relCount=(r)=>pv.filter(v=>getRel(v)===r).length;
+    const relStatusCount=(r,s)=>pv.filter(v=>getRel(v)===r&&v.status===s).length;
+    const ageCount=(ag)=>pv.filter(v=>v.ageGroup===ag).length;
+    const out={
+      "AC No":sample.ac_no||"",
+      "AC Name":sample.ac_name||"",
+      "Part Number":pt,
+      "Total":pv.length,
+      "Active":statusCount("Active"),
+      "Under Adjudication":statusCount("Under Adjudication"),
+      "Deleted":statusCount("Deleted"),
+      "Muslim":relCount("Muslim"),
+      "Hindu":relCount("Hindu"),
+      "Uncertain":relCount("Uncertain"),
+      "Unknown":relCount("Unknown"),
+      "Muslim Adj":relStatusCount("Muslim","Under Adjudication"),
+      "Hindu Adj":relStatusCount("Hindu","Under Adjudication"),
+      "Muslim Del":relStatusCount("Muslim","Deleted"),
+      "Hindu Del":relStatusCount("Hindu","Deleted"),
+    };
+    ageBuckets.forEach(ag=>{ out[`Age ${ag}`]=ageCount(ag); });
+    return out;
+  });
+  const acInsights=acKeys.filter(k=>k!=="|").map(k=>{
+    const [acNo,acName]=k.split("|");
+    const av=rows.filter(v=>String(v.ac_no||"").trim()===acNo&&String(v.ac_name||"").trim()===acName);
+    return {
+      "AC No":acNo,
+      "AC Name":acName,
+      "Part Count":[...new Set(av.map(v=>String(v.part_no||"").trim()).filter(Boolean))].length,
+      "Total":av.length,
+      "Active":av.filter(v=>v.status==="Active").length,
+      "Under Adjudication":av.filter(v=>v.status==="Under Adjudication").length,
+      "Deleted":av.filter(v=>v.status==="Deleted").length,
+      "Muslim":av.filter(v=>getRel(v)==="Muslim").length,
+      "Hindu":av.filter(v=>getRel(v)==="Hindu").length,
+      "Uncertain":av.filter(v=>getRel(v)==="Uncertain").length,
+      "Unknown":av.filter(v=>getRel(v)==="Unknown").length,
+    };
+  });
+  const religionStatus=["Muslim","Hindu","Uncertain","Unknown"].map(rel=>{
+    const rv=rows.filter(v=>getRel(v)===rel);
+    return {
+      Religion:rel,
+      Total:rv.length,
+      Active:rv.filter(v=>v.status==="Active").length,
+      "Under Adjudication":rv.filter(v=>v.status==="Under Adjudication").length,
+      Deleted:rv.filter(v=>v.status==="Deleted").length,
+    };
+  }).filter(r=>r.Total>0);
+  const ageReligion=ageBuckets.map(ag=>{
+    const av=rows.filter(v=>v.ageGroup===ag);
+    return {
+      "Age Group":ag,
+      Total:av.length,
+      Muslim:av.filter(v=>getRel(v)==="Muslim").length,
+      Hindu:av.filter(v=>getRel(v)==="Hindu").length,
+      Uncertain:av.filter(v=>getRel(v)==="Uncertain").length,
+      Unknown:av.filter(v=>getRel(v)==="Unknown").length,
+    };
+  }).filter(r=>r.Total>0);
+  const ageStatus=ageBuckets.map(ag=>{
+    const av=rows.filter(v=>v.ageGroup===ag);
+    return {
+      "Age Group":ag,
+      Total:av.length,
+      Active:av.filter(v=>v.status==="Active").length,
+      "Under Adjudication":av.filter(v=>v.status==="Under Adjudication").length,
+      Deleted:av.filter(v=>v.status==="Deleted").length,
+    };
+  }).filter(r=>r.Total>0);
+  const meta=[{
+    schemaVersion:INSIGHTS_SCHEMA_VERSION,
+    createdAt:new Date().toISOString(),
+    appVersion:"1.0",
+    totalVoters:rows.length,
+    totalParts:parts.length,
+    totalACs:acInsights.length,
+    source:"Electoral Integrity Monitor",
+  }];
+  return {meta,partInsights,acInsights,religionStatus,ageReligion,ageStatus};
+}
+
+function exportInsightsWorkbook(voters){
+  if(!Array.isArray(voters)||!voters.length){
+    window.alert("No voter data loaded.");
+    return;
+  }
+  try{
+    const {meta,partInsights,acInsights,religionStatus,ageReligion,ageStatus}=buildInsightsWorkbookData(voters);
+    const wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(meta),INSIGHTS_SHEETS.meta);
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(partInsights),INSIGHTS_SHEETS.part);
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(acInsights),INSIGHTS_SHEETS.ac);
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(religionStatus),INSIGHTS_SHEETS.religionStatus);
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(ageReligion),INSIGHTS_SHEETS.ageReligion);
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(ageStatus),INSIGHTS_SHEETS.ageStatus);
+    XLSX.writeFile(wb,sanitizeFileName(`Insights_${new Date().toISOString().slice(0,10)}.xlsx`),{compression:true});
+  }catch(err){
+    window.alert(`Insights export failed: ${err?.message||"unknown error"}`);
+  }
+}
+
+function readInsightsWorkbookData(wb){
+  return {
+    meta:XLSX.utils.sheet_to_json(wb.Sheets[INSIGHTS_SHEETS.meta],{defval:""}),
+    partInsights:XLSX.utils.sheet_to_json(wb.Sheets[INSIGHTS_SHEETS.part],{defval:""}),
+    acInsights:XLSX.utils.sheet_to_json(wb.Sheets[INSIGHTS_SHEETS.ac],{defval:""}),
+    religionStatus:XLSX.utils.sheet_to_json(wb.Sheets[INSIGHTS_SHEETS.religionStatus],{defval:""}),
+    ageReligion:XLSX.utils.sheet_to_json(wb.Sheets[INSIGHTS_SHEETS.ageReligion],{defval:""}),
+    ageStatus:XLSX.utils.sheet_to_json(wb.Sheets[INSIGHTS_SHEETS.ageStatus],{defval:""}),
+  };
 }
 
 async function sha256HexArrayBuffer(buf){
@@ -679,13 +1126,23 @@ function FilterBar({gSearch,setGSearch,gPart,setGPart,gStatus,setGStatus,
 }
 
 // ══ UPLOAD SCREEN ════════════════════════════════════════════════════════════
-function UploadScreen({onFiles,loading}){
+function UploadScreen({onFiles,loading,theme,setTheme}){
   const ref=useRef();
+  const isMobile=useWindowWidth()<920;
+  const uploadFeatureCardBg=theme==="dark" ? "#0d1526" : "#ffffff";
+  const uploadSubpanelBg=theme==="dark" ? C.bg : "#f8fbff";
   return(
     <div style={{minHeight:"100vh",background:C.bg,color:C.text,fontFamily:FONT,
       display:"flex",alignItems:"center",justifyContent:"center"}}>
-      <div style={{maxWidth:700,width:"100%",padding:"0 24px"}}>
+      <div style={{maxWidth:1180,width:"100%",padding:"24px"}}>
         <div style={{textAlign:"center",marginBottom:36}}>
+          <div style={{display:"flex",justifyContent:"flex-end",marginBottom:12}}>
+            <button onClick={()=>setTheme(t=>t==="dark"?"light":"dark")}
+              style={{padding:"6px 12px",background:C.panel,border:`1px solid ${C.border}`,
+                borderRadius:7,color:C.muted,fontSize:12,cursor:"pointer"}}>
+              {theme==="dark"?"☀ Light":"🌙 Dark"}
+            </button>
+          </div>
           <div style={{fontSize:10,letterSpacing:5,color:C.dim,marginBottom:10,
             textTransform:"uppercase",fontFamily:MONO}}>Electoral Integrity Monitor · v1.0</div>
           <h1 style={{fontSize:32,fontWeight:800,color:C.text,margin:"0 0 10px",letterSpacing:-1}}>
@@ -695,33 +1152,101 @@ function UploadScreen({onFiles,loading}){
             West Bengal 2026 · Data quality checks · Statistical anomaly analysis
           </p>
         </div>
-        <div onDrop={e=>{e.preventDefault();const f=Array.from(e.dataTransfer.files).filter(x=>x.name.endsWith(".xlsx"));if(f.length)onFiles(f);}}
-          onDragOver={e=>e.preventDefault()} onClick={()=>ref.current?.click()}
-          style={{border:`2px dashed ${C.border}`,borderRadius:12,padding:"50px 32px",
-            textAlign:"center",cursor:"pointer",background:C.panel,transition:"all 0.2s"}}
-          onMouseEnter={e=>{e.currentTarget.style.borderColor=C.blue}}
-          onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border}}>
-          <div style={{fontSize:40,marginBottom:12}}>📊</div>
-          <p style={{fontSize:15,color:C.text,marginBottom:5,fontWeight:600}}>
-            {loading?"Processing…":"Drop VoterRoll Excel files here"}
-          </p>
-          <p style={{fontSize:12,color:C.dim}}>Multiple .xlsx files · All parts of any AC · Supports 300+ booths</p>
-          <p style={{fontSize:11,color:C.dim,marginTop:6}}>🔒 Fully local — no data sent to any server</p>
-          <input ref={ref} type="file" accept=".xlsx" multiple style={{display:"none"}}
-            onChange={e=>onFiles(Array.from(e.target.files))}/>
-        </div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:10,marginTop:24}}>
+        <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"minmax(420px, 1.05fr) minmax(360px, 0.95fr)",gap:18,alignItems:"start"}}>
+          <div style={{display:"flex",flexDirection:"column",gap:18}}>
+            <div onDrop={e=>{e.preventDefault();const f=Array.from(e.dataTransfer.files).filter(x=>x.name.endsWith(".xlsx"));if(f.length)onFiles(f);}}
+              onDragOver={e=>e.preventDefault()} onClick={()=>ref.current?.click()}
+              style={{border:`2px dashed ${C.border}`,borderRadius:14,padding:"54px 32px",
+                textAlign:"center",cursor:"pointer",background:C.panel,transition:"all 0.2s",
+                boxShadow:`inset 0 0 0 1px ${C.bg}`}}
+              onMouseEnter={e=>{e.currentTarget.style.borderColor=C.blue}}
+              onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border}}>
+              <div style={{fontSize:40,marginBottom:12}}>📊</div>
+              <p style={{fontSize:18,color:C.text,marginBottom:5,fontWeight:700}}>
+                {loading?"Processing…":"Drop VoterRoll Excel files here"}
+              </p>
+              <p style={{fontSize:12,color:C.dim}}>Multiple `.xlsx` files · All parts of any AC · Supports 300+ booths</p>
+              <p style={{fontSize:11,color:C.dim,marginTop:6}}>🔒 Fully local processing. Only volunteer PDF extraction uses Claude outside this app.</p>
+              <div style={{display:"flex",justifyContent:"center",gap:8,flexWrap:"wrap",marginTop:14}}>
+                <button onClick={(e)=>{e.stopPropagation();ref.current?.click();}}
+                  style={{padding:"7px 14px",background:C.blue+"22",border:`1px solid ${C.blue}66`,borderRadius:8,color:C.blue,fontSize:12,cursor:"pointer",fontWeight:700}}>
+                  Choose Excel Files
+                </button>
+                <button onClick={(e)=>{e.stopPropagation();copyPlainText(CLAUDE_EXTRACTION_PROMPT,"Claude extraction prompt");}}
+                  style={{padding:"7px 14px",background:"transparent",border:`1px solid ${C.border}`,borderRadius:8,color:C.muted,fontSize:12,cursor:"pointer"}}>
+                  Copy Claude Prompt
+                </button>
+              </div>
+              <input ref={ref} type="file" accept=".xlsx" multiple style={{display:"none"}}
+                onChange={e=>onFiles(Array.from(e.target.files))}/>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:10}}>
           {[
             ["🧠 Classification", "Name + relation assisted classification · review queue · manual overrides"],
             ["📊 Statistical Checks", "Adjudication/deletion rates · chi-square tests · trend decomposition"],
             ["🧾 Duplicate Detection", "Row-level duplicates · same-content file hash detection"],
-            ["📦 Reporting", "One-click export pack (XLSX + charts + printable report)"],
+                ["📦 Reporting", "One-click report pack · filtered voter export workbook · charts + printable report"],
           ].map(([t,d])=>(
-            <div key={t} style={{padding:14,background:"#0d1526",borderRadius:8,border:`1px solid ${C.border}`}}>
+            <div key={t} style={{padding:14,background:uploadFeatureCardBg,borderRadius:8,border:`1px solid ${C.border}`,
+              boxShadow:theme==="light"?"0 10px 24px rgba(15, 23, 42, 0.05)":"none"}}>
               <div style={{fontWeight:700,color:C.text,marginBottom:4,fontSize:13}}>{t}</div>
               <div style={{color:C.dim,fontSize:11,lineHeight:1.6}}>{d}</div>
             </div>
           ))}
+            </div>
+          </div>
+          <div style={{background:C.panel,borderRadius:14,border:`1px solid ${C.border}`,padding:18}}>
+            <div style={{display:"flex",justifyContent:"space-between",gap:8,alignItems:"flex-start",marginBottom:10,flexWrap:"wrap"}}>
+              <div>
+                <div style={{fontSize:11,fontWeight:700,color:C.blue,textTransform:"uppercase",letterSpacing:2.5,fontFamily:MONO}}>Input Preparation</div>
+                <div style={{fontSize:18,fontWeight:800,color:C.text,marginTop:4}}>How the Excel input is generated</div>
+              </div>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                <button onClick={()=>copyPlainText(CLAUDE_VOLUNTEER_MESSAGE,"Volunteer request message")}
+                  style={{padding:"6px 10px",borderRadius:7,border:`1px solid ${C.border}`,background:"transparent",color:C.muted,fontSize:12,cursor:"pointer"}}>
+                  Copy Message
+                </button>
+                <button onClick={()=>copyPlainText(CLAUDE_EXTRACTION_PROMPT,"Claude extraction prompt")}
+                  style={{padding:"6px 10px",borderRadius:7,border:`1px solid ${C.blue}66`,background:C.blue+"18",color:C.blue,fontSize:12,cursor:"pointer"}}>
+                  Copy Prompt
+                </button>
+              </div>
+            </div>
+            <div style={{fontSize:12,color:C.muted,lineHeight:1.75,marginBottom:12}}>
+              This tool expects Excel files. Those are produced from ECI image-based PDFs by uploading the PDF to{" "}
+              <a href="https://claude.ai" target="_blank" rel="noreferrer"
+                style={{color:C.blue,textDecoration:"underline"}}>Claude</a>
+              {" "}and using a fixed extraction prompt that reads booth metadata, extracts each voter box, detects `UNDER ADJUDICATION` / `DELETED`, and writes a structured `Voter Roll` sheet. Claude usually takes about <b>5-15 minutes</b> depending on PDF size and queue time.
+            </div>
+            <div style={{display:"grid",gap:10}}>
+              {[
+                ["1. Download PDF", <>Get the English electoral-roll PDF from the{" "}
+                  <a href="https://voters.eci.gov.in/download-eroll?stateCode=S25" target="_blank" rel="noreferrer"
+                    style={{color:C.blue,textDecoration:"underline"}}>ECI electoral roll download portal</a>
+                  {" "}for at least one booth.</>],
+                ["2. Open Claude", <>Use the{" "}
+                  <a href="https://play.google.com/store/apps/details?id=com.anthropic.claude" target="_blank" rel="noreferrer"
+                    style={{color:C.blue,textDecoration:"underline"}}>Claude Android app</a>
+                  {" "}or{" "}
+                  <a href="https://claude.ai" target="_blank" rel="noreferrer"
+                    style={{color:C.blue,textDecoration:"underline"}}>claude.ai</a>
+                  {" "}and attach the PDF file.</>],
+                ["3. Paste prompt", "Use the extraction prompt so Claude outputs a formatted XLSX with `Voter Roll` and `Summary` sheets. Wait roughly 5-15 minutes for generation."],
+                ["4. Upload here", "Load the generated `.xlsx` into this dashboard for analysis, review, duplicates, and reporting."],
+              ].map(([t,d])=>(
+                <div key={t} style={{padding:"10px 12px",border:`1px solid ${C.border}`,borderRadius:9,background:uploadSubpanelBg}}>
+                  <div style={{fontSize:12,fontWeight:700,color:C.text,marginBottom:3}}>{t}</div>
+                  <div style={{fontSize:11,color:C.dim,lineHeight:1.6}}>{d}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{marginTop:12,padding:"10px 12px",border:`1px solid ${C.border}`,borderRadius:9,background:uploadSubpanelBg}}>
+              <div style={{fontSize:12,fontWeight:700,color:C.text,marginBottom:4}}>Contribute extracted Excel files</div>
+              <div style={{fontSize:11.5,color:C.muted,lineHeight:1.7}}>
+                Send volunteer-generated Excel files to <b>wbsir2025@gmail.com</b> or <b>wbsir2026@gmail.com</b>.
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -785,7 +1310,12 @@ export default function App(){
   const [boothSortD,setBoothSortD]=useState("asc");
 
   // Token editor state
-  const [tokenOverrides,setTokenOverrides]=useState({}); // token→value (user edits)
+  const [tokenOverrides,setTokenOverrides]=useState(()=>{ // token→value (user edits / learned memory)
+    try{
+      const v=localStorage.getItem("eim_tokenOverrides");
+      return v?JSON.parse(v):{};
+    }catch{return {};}
+  });
   const [tokSearch,setTokSearch]=useState("");
   const [tokFilter,setTokFilter]=useState("all"); // all|muslim|hindu|user
   const [tokPage,setTokPage]=useState(0);
@@ -801,6 +1331,7 @@ export default function App(){
   const [aiLoading,setAiLoading]=useState(false);
   const [aiBrief,setAiBrief]=useState("");
   const [chartExportModal,setChartExportModal]=useState(null);
+  const [tableExportModal,setTableExportModal]=useState(null);
   const [chartStudioOpen,setChartStudioOpen]=useState(false);
   const [chartPrefs,setChartPrefs]=useState({
     showLegend:true,
@@ -822,9 +1353,21 @@ export default function App(){
   const [loadedFileMeta,setLoadedFileMeta]=useState(()=>{
     try{ const v=localStorage.getItem("eim_loadedFileMeta"); return v?JSON.parse(v):{}; }catch{return {};}
   }); // { filename -> metadata including raw/content hashes }
+  const [loadedInsightsMeta,setLoadedInsightsMeta]=useState(()=>{
+    try{ const v=localStorage.getItem("eim_loadedInsightsMeta"); return v?JSON.parse(v):{}; }catch{return {};}
+  });
   const [replaceModal,setReplaceModal]=useState(null); // {files:[File,...]} pending replace prompt
+  const [ingestPlanModal,setIngestPlanModal]=useState(null);
+  const [resolvedDuplicateKeys,setResolvedDuplicateKeys]=useState({});
+  const [resolvedFileHashes,setResolvedFileHashes]=useState({});
+  const [dupStatusFilter,setDupStatusFilter]=useState("all");
   const [colMapModal,setColMapModal]=useState(null); // {file, actualCols, mapping, missing, resolve}
-  const [tokenLearnCount,setTokenLearnCount]=useState(0); // tokens auto-learned from review actions
+  const [tokenLearnCount,setTokenLearnCount]=useState(()=>{
+    try{
+      const v=localStorage.getItem("eim_tokenLearnCount");
+      return v?Math.max(0,parseInt(v,10)||0):0;
+    }catch{return 0;}
+  }); // tokens auto-learned from review actions
   const jointReclassDoneRef=useRef(false);
 
   // Effective token scores (base + user overrides); -1 sentinel = deleted/suppressed
@@ -862,8 +1405,6 @@ export default function App(){
     try{
       const savedOverrides=localStorage.getItem("eim_overrides");
       if(savedOverrides) setOverrides(JSON.parse(savedOverrides));
-      const savedTokOverrides=localStorage.getItem("eim_tokenOverrides");
-      if(savedTokOverrides) setTokenOverrides(JSON.parse(savedTokOverrides));
       // Voters are large — restore only if within budget (5 MB guard)
       const savedVoters=localStorage.getItem("eim_voters");
       if(savedVoters && savedVoters.length < 5*1024*1024){
@@ -881,11 +1422,17 @@ export default function App(){
     try{ localStorage.setItem("eim_tokenOverrides",JSON.stringify(tokenOverrides)); }catch{}
   },[tokenOverrides]);
   useEffect(()=>{
+    try{ localStorage.setItem("eim_tokenLearnCount",String(tokenLearnCount||0)); }catch{}
+  },[tokenLearnCount]);
+  useEffect(()=>{
     try{ localStorage.setItem("eim_loadedFiles",JSON.stringify(loadedFiles)); }catch{}
   },[loadedFiles]);
   useEffect(()=>{
     try{ localStorage.setItem("eim_loadedFileMeta",JSON.stringify(loadedFileMeta)); }catch{}
   },[loadedFileMeta]);
+  useEffect(()=>{
+    try{ localStorage.setItem("eim_loadedInsightsMeta",JSON.stringify(loadedInsightsMeta)); }catch{}
+  },[loadedInsightsMeta]);
   // Voters: throttle saves — only when count changes or status changes (avoid huge writes on filter)
   const votersSaveKey=voters.length+"_"+voters.filter(v=>v.status!=="Active").length;
   useEffect(()=>{
@@ -986,7 +1533,7 @@ export default function App(){
   // ── Column alias map: canonical → list of accepted aliases (all lowercase) ──
   const COLUMN_ALIASES={
     name:           ["name","voter_name","voter name","full_name","fullname","first_name","firstname","elector name","elector_name"],
-    relation_name:  ["relation_name","father_name","father name","husband_name","husband name","guardian_name","guardian name","relative_name","relative name","relation name","guardian","father/husband","father / husband","father/husband name"],
+    relation_name:  ["relation_name","relation name","father_name","father name","husband_name","husband name","guardian_name","guardian name","relative_name","relative name","guardian","father/husband","father / husband","father/husband name"],
     voter_id:       ["voter_id","voter_id_card","voter id","voter_id_no","id","epic_no","epic no","epic","voter card no","voter_card_no","id_no","id no","electoral_no","electoral no","voter no","voter number"],
     serial_no:      ["serial_no","serial no","sl_no","sl no","slno","s.no","s no","sno","sr_no","sr no","srno","sequence_no","sequence no","roll_no","roll no","row_no","row no","#"],
     part_no:        ["part_no","part no","part","booth_no","booth no","booth","polling_booth","polling booth","part number","partno","ward_no","ward no","segment_no"],
@@ -999,7 +1546,7 @@ export default function App(){
     ac_name:       ["ac_name","ac name","assembly constituency name","constituency name"],
     house_no:      ["house_no","house no","house number","house_number"],
     page_no:       ["page_no","page no","page number","page_number"],
-    relation_type: ["relation_type","relation type","relation","father/husband type"],
+    relation_type: ["relation_type","relation type","relation","father/husband type","relation label"],
   };
   const OPTIONAL_COLS=Object.keys(OPTIONAL_ALIASES);
   const ALL_COL_ALIASES={...COLUMN_ALIASES,...OPTIONAL_ALIASES};
@@ -1040,6 +1587,162 @@ export default function App(){
       setColMapModal({file:fileName,actualCols,mapping:{...currentMap},missing:stillMissing,resolve});
     });
 
+  const parseCoverageFromRows=useCallback((rows)=>({
+    acPairs:[...new Set(rows.map(r=>`${String(r.ac_no||r["AC No"]||"").trim()}|${String(r.ac_name||r["AC Name"]||"").trim()}`).filter(k=>k!=="|"))],
+    parts:[...new Set(rows.map(r=>String(r.part_no||r["Part Number"]||r.Part||r["Part No"]||"").trim()).filter(Boolean))].sort((a,b)=>(+a||0)-(+b||0)),
+  }),[]);
+
+  const detectWorkbookInfo=useCallback((wb,fileName="")=>{
+    const lower=String(fileName||"").toLowerCase();
+    const localImportSheetName=(()=>{
+      const preferred=["Voter Roll","Filtered_Voters","Session_Voters","All_Voters","Voters"];
+      const exact=preferred.find(name=>wb?.Sheets?.[name]);
+      if(exact) return exact;
+      const normalized=(wb?.SheetNames||[]).map(name=>({name,key:String(name||"").trim().toLowerCase()}));
+      const fuzzy=normalized.find(({key})=>[
+        "voter roll","filtered_voters","filtered voters","session_voters","session voters","all_voters","all voters","voters",
+      ].includes(key));
+      return fuzzy?.name||null;
+    })();
+    if(lower.endsWith(".eimpack")||lower.endsWith(".json")){
+      return {kind:"session_pack",label:"Session Pack",coverage:{acPairs:[],parts:[]},sheetNames:[]};
+    }
+    const sheets=wb?.SheetNames||[];
+    const has=(name)=>!!wb?.Sheets?.[name];
+    if(has(INSIGHTS_SHEETS.meta)&&has(INSIGHTS_SHEETS.part)){
+      const metaRows=XLSX.utils.sheet_to_json(wb.Sheets[INSIGHTS_SHEETS.meta],{defval:""});
+      const partRows=XLSX.utils.sheet_to_json(wb.Sheets[INSIGHTS_SHEETS.part],{defval:""});
+      return {
+        kind:"insights_xlsx",
+        label:"Insights Workbook",
+        schemaVersion:metaRows[0]?.schemaVersion||"",
+        coverage:parseCoverageFromRows(partRows),
+        datasets:readInsightsWorkbookData(wb),
+        sheetNames:sheets,
+      };
+    }
+    if(has("Session_Metadata")&&has("Session_Voters")){
+      const rows=XLSX.utils.sheet_to_json(wb.Sheets["Session_Voters"],{defval:""});
+      return {kind:"session_xlsx",label:"Session Workbook",coverage:parseCoverageFromRows(rows),sheetNames:sheets};
+    }
+    if(has("Export_Metadata")&&has("Filtered_Voters")){
+      const rows=XLSX.utils.sheet_to_json(wb.Sheets["Filtered_Voters"],{defval:""});
+      return {kind:"filtered_export",label:"Filtered Export Workbook",coverage:parseCoverageFromRows(rows),sheetNames:sheets};
+    }
+    const importSheetName=localImportSheetName;
+    if(importSheetName){
+      const rows=XLSX.utils.sheet_to_json(wb.Sheets[importSheetName],{defval:""});
+      return {
+        kind:importSheetName==="Voter Roll"?"raw_roll_xlsx":"voter_export_xlsx",
+        label:importSheetName==="Voter Roll"?"Raw Roll Workbook":"Voter-Level Export Workbook",
+        importSheetName,
+        coverage:parseCoverageFromRows(rows),
+        sheetNames:sheets,
+      };
+    }
+    return {kind:"unknown_xlsx",label:"Unknown Workbook",coverage:{acPairs:[],parts:[]},sheetNames:sheets};
+  },[parseCoverageFromRows]);
+
+  const planUploadBatch=useCallback(async(files)=>{
+    const plans=[];
+    for(const file of files){
+      const lower=String(file.name||"").toLowerCase();
+      if(lower.endsWith(".eimpack")||lower.endsWith(".json")){
+        plans.push({file,kind:"session_pack",label:"Session Pack",coverage:{acPairs:[],parts:[]},plannedAction:"not-loadable-from-main-upload"});
+        continue;
+      }
+      if(!lower.endsWith(".xlsx")){
+        plans.push({file,kind:"unsupported",label:"Unsupported File",coverage:{acPairs:[],parts:[]},plannedAction:"skip"});
+        continue;
+      }
+      try{
+        const buf=await file.arrayBuffer();
+        const wb=XLSX.read(buf,{type:"array"});
+        const info=detectWorkbookInfo(wb,file.name);
+        plans.push({
+          file,
+          ...info,
+          plannedAction:(info.kind==="raw_roll_xlsx"||info.kind==="voter_export_xlsx"||info.kind==="filtered_export")?"load-voters":
+            info.kind==="insights_xlsx"?"catalog-insights":
+            info.kind==="session_xlsx"?"use-import-session":
+            "skip",
+        });
+      }catch(err){
+        plans.push({file,kind:"corrupt",label:"Unreadable Workbook",coverage:{acPairs:[],parts:[]},plannedAction:"skip",error:err?.message||"read failed"});
+      }
+    }
+    const partOwners={};
+    plans.forEach(p=>{
+      (p.coverage?.parts||[]).forEach(part=>{
+        const key=(p.coverage?.acPairs?.[0]||"?")+"|"+part;
+        (partOwners[key]=partOwners[key]||[]).push(p.file.name);
+      });
+    });
+    const overlaps=Object.entries(partOwners)
+      .filter(([,names])=>names.length>1)
+      .map(([key,names])=>({key,files:names}));
+    return {plans,overlaps};
+  },[detectWorkbookInfo]);
+
+  const enrichUploadPlan=useCallback((plan)=>{
+    const existingRawKeys=new Set(voters.map(v=>`${String(v.ac_no||"").trim()}|${String(v.ac_name||"").trim()}|${String(v.part_no||"").trim()}`));
+    const existingInsightPartMap={};
+    Object.values(loadedInsightsMeta||{}).forEach(src=>{
+      (src.partInsights||[]).forEach(r=>{
+        const key=`${String(r["AC No"]||r.ac_no||"").trim()}|${String(r["AC Name"]||r.ac_name||"").trim()}|${String(r["Part Number"]||r.part_no||r.Part||"").trim()}`;
+        if(!key || key==="||") return;
+        (existingInsightPartMap[key]=existingInsightPartMap[key]||[]).push(src.fileName);
+      });
+    });
+    const plans=(plan?.plans||[]).map(p=>{
+      const partRows=p.datasets?.partInsights||[];
+      const overlapWithRaw=[];
+      const overlapWithInsights=[];
+      const internalConflicts=[];
+      const seenParts={};
+      partRows.forEach(r=>{
+        const key=`${String(r["AC No"]||r.ac_no||"").trim()}|${String(r["AC Name"]||r.ac_name||"").trim()}|${String(r["Part Number"]||r.part_no||r.Part||"").trim()}`;
+        if(!key || key==="||") return;
+        if(existingRawKeys.has(key)) overlapWithRaw.push(key);
+        if(existingInsightPartMap[key]?.length) overlapWithInsights.push({key,files:existingInsightPartMap[key]});
+        const sig=JSON.stringify(r);
+        if(seenParts[key] && seenParts[key]!==sig) internalConflicts.push(key);
+        seenParts[key]=sig;
+      });
+      return {
+        ...p,
+        overlapWithRaw:[...new Set(overlapWithRaw)],
+        overlapWithInsights:overlapWithInsights.filter((v,i,a)=>a.findIndex(x=>x.key===v.key)===i),
+        internalConflicts:[...new Set(internalConflicts)],
+      };
+    });
+    return {...plan,plans};
+  },[voters,loadedInsightsMeta]);
+
+  const findImportSheetName=useCallback((wb)=>{
+    const preferred=[
+      "Voter Roll",
+      "Filtered_Voters",
+      "Session_Voters",
+      "All_Voters",
+      "Voters",
+    ];
+    const exact=preferred.find(name=>wb?.Sheets?.[name]);
+    if(exact) return exact;
+    const normalized=(wb?.SheetNames||[]).map(name=>({name,key:String(name||"").trim().toLowerCase()}));
+    const fuzzy=normalized.find(({key})=>[
+      "voter roll",
+      "filtered_voters",
+      "filtered voters",
+      "session_voters",
+      "session voters",
+      "all_voters",
+      "all voters",
+      "voters",
+    ].includes(key));
+    return fuzzy?.name||null;
+  },[]);
+
   // ── Load files (with duplicate-file detection & replace/cancel modal) ────────
   const doLoadFiles=useCallback(async(files, replaceNames=new Set())=>{
     setLoading(true);
@@ -1074,12 +1777,17 @@ export default function App(){
           continue;
         }
         const wb=XLSX.read(buf,{type:"array"});
-        if(!wb.Sheets["Voter Roll"]){
+        const importSheetName=findImportSheetName(wb);
+        if(!importSheetName){
           newWarnings.push({file:file.name,type:"error",
-            msg:`Missing "Voter Roll" sheet. Found sheets: ${wb.SheetNames.join(", ")}`});
+            msg:`Missing importable voter sheet. Expected one of: Voter Roll, Filtered_Voters, Session_Voters, All_Voters, Voters. Found sheets: ${wb.SheetNames.join(", ")}`});
           continue;
         }
-        const ws=wb.Sheets["Voter Roll"];
+        if(importSheetName!=="Voter Roll"){
+          newWarnings.push({file:file.name,type:"info",
+            msg:`Importing from "${importSheetName}" sheet (exported workbook compatibility mode)`});
+        }
+        const ws=wb.Sheets[importSheetName];
         const rows=XLSX.utils.sheet_to_json(ws,{defval:""});
         if(!rows.length){
           newWarnings.push({file:file.name,type:"error",msg:"Sheet is empty"});
@@ -1180,6 +1888,9 @@ export default function App(){
           size:file.size,
           lastModified:file.lastModified,
           rowCount:semanticSignatures.length,
+          acNo:String(rows[0]?.ac_no||rows[0]?.["AC No"]||"").trim(),
+          acName:String(rows[0]?.ac_name||rows[0]?.["AC Name"]||"").trim(),
+          parts:[...new Set(rows.map(r=>String(r.part_no||r["Part Number"]||r.Part||"").trim()).filter(Boolean))],
           rawHash,
           semanticHash,
           importedAt:new Date().toISOString(),
@@ -1269,10 +1980,52 @@ export default function App(){
       setFileWarnings(prev=>[...prev,{file:"unknown",type:"error",msg:e.message}]);
     }
     setLoading(false);
-  },[boothPart,voters,effectiveScores,loadedFileMeta]);
+  },[boothPart,voters,effectiveScores,loadedFileMeta,findImportSheetName]);
 
-  // ── Public loadFiles: checks registry first, shows replace/cancel if needed ──
-  const loadFiles=useCallback(async(files)=>{
+  const executePlannedUpload=useCallback(async(plans)=>{
+    const insights=plans.filter(p=>p.plannedAction==="catalog-insights");
+    if(insights.length){
+      setLoadedInsightsMeta(prev=>{
+        const next={...prev};
+        insights.forEach(p=>{
+          next[p.file.name]={
+            fileName:p.file.name,
+            schemaVersion:p.schemaVersion||INSIGHTS_SCHEMA_VERSION,
+            importedAt:new Date().toISOString(),
+            acPairs:p.coverage?.acPairs||[],
+            parts:p.coverage?.parts||[],
+            kind:p.kind,
+            meta:p.datasets?.meta||[],
+            partInsights:p.datasets?.partInsights||[],
+            acInsights:p.datasets?.acInsights||[],
+            religionStatus:p.datasets?.religionStatus||[],
+            ageReligion:p.datasets?.ageReligion||[],
+            ageStatus:p.datasets?.ageStatus||[],
+            overlapWithRaw:p.overlapWithRaw||[],
+            overlapWithInsights:p.overlapWithInsights||[],
+            internalConflicts:p.internalConflicts||[],
+          };
+        });
+        return next;
+      });
+      setFileWarnings(prev=>[...prev,...insights.map(p=>({
+        file:p.file.name,
+        type:"info",
+        msg:`Detected Insights Workbook v1; loaded ${(p.coverage?.parts||[]).length} parts in analysis-only dataset${p.overlapWithRaw?.length?` · raw-overlap ${p.overlapWithRaw.length}`:""}${p.overlapWithInsights?.length?` · insight-overlap ${p.overlapWithInsights.length}`:""}.`,
+      }))]);
+    }
+    const skipped=plans.filter(p=>["session_xlsx","session_pack","unsupported","unknown_xlsx","corrupt"].includes(p.kind));
+    if(skipped.length){
+      setFileWarnings(prev=>[...prev,...skipped.map(p=>({
+        file:p.file.name,
+        type:p.kind==="corrupt"?"error":"warn",
+        msg:p.kind==="session_xlsx"||p.kind==="session_pack"
+          ?"Detected session file in main uploader. Use the Import Session button instead."
+          :p.error||`Unsupported file type: ${p.label}`,
+      }))]);
+    }
+    const files=plans.filter(p=>p.plannedAction==="load-voters").map(p=>p.file);
+    if(!files.length) return;
     const byName=files.filter(f=>f.name in loadedFiles);
     const byContent=[];
     const seenRaw=new Map();
@@ -1302,6 +2055,24 @@ export default function App(){
     }
     await doLoadFiles(files);
   },[loadedFiles,loadedFileMeta,doLoadFiles]);
+
+  // ── Public loadFiles: detect workbook types, plan mixed uploads, then load ──
+  const loadFiles=useCallback(async(files)=>{
+    const plan=enrichUploadPlan(await planUploadBatch(files));
+    const typeSet=[...new Set(plan.plans.map(p=>p.kind))];
+    const shouldShowPlanner=
+      plan.overlaps.length>0 ||
+      typeSet.length>1 ||
+      typeSet.includes("insights_xlsx") ||
+      typeSet.includes("session_xlsx") ||
+      typeSet.includes("unknown_xlsx") ||
+      plan.plans.some(p=>p.overlapWithRaw?.length||p.overlapWithInsights?.length||p.internalConflicts?.length);
+    if(shouldShowPlanner){
+      setIngestPlanModal(plan);
+      return;
+    }
+    await executePlannedUpload(plan.plans);
+  },[planUploadBatch,enrichUploadPlan,executePlannedUpload]);
 
   const openVoterEditor=useCallback((v)=>{
     setVoterEditModal({
@@ -1369,6 +2140,148 @@ export default function App(){
 
   const parts=useMemo(()=>[...new Set(voters.map(v=>v.part_no))].sort((a,b)=>+a-+b),[voters]);
   const ageGroups=["18–22","23–30","31–39","40–44★","45–60","60+","Unknown"];
+  const insightSources=useMemo(()=>Object.values(loadedInsightsMeta||{}),[loadedInsightsMeta]);
+  const analysisOnly=(!voters.length && insightSources.length>0);
+  const analysisOnlyData=useMemo(()=>{
+    const byPart={};
+    const duplicateCoverage=[];
+    const conflictingCoverage=[];
+    const sourceRows=[];
+    const partSigMap={};
+    insightSources.forEach(src=>{
+      const importedAt=src.importedAt||"";
+      sourceRows.push({
+        fileName:src.fileName||"",
+        type:"Insights Workbook",
+        importedAt,
+        acCoverage:(src.acPairs||[]).map(p=>p.replace("|"," - ")).join("; "),
+        partCount:(src.parts||[]).length,
+        rowCount:(src.partInsights||[]).length,
+      });
+      (src.partInsights||[]).forEach(row=>{
+        const acNo=String(row["AC No"]||row.ac_no||"").trim();
+        const acName=String(row["AC Name"]||row.ac_name||"").trim();
+        const partNo=String(row["Part Number"]||row.part_no||row.Part||"").trim();
+        const key=`${acNo}|${acName}|${partNo}`;
+        if(!partNo) return;
+        const normalized={
+          ac_no:acNo,
+          ac_name:acName,
+          part_no:partNo,
+          total:+(row.Total||0),
+          active:+(row.Active||0),
+          adj:+(row["Under Adjudication"]||row["Under Adj"]||0),
+          del:+(row.Deleted||0),
+          muslim:+(row.Muslim||0),
+          hindu:+(row.Hindu||0),
+          uncertain:+(row.Uncertain||0),
+          unknown:+(row.Unknown||0),
+          muslimAdj:+(row["Muslim Adj"]||0),
+          hinduAdj:+(row["Hindu Adj"]||0),
+          muslimDel:+(row["Muslim Del"]||0),
+          hinduDel:+(row["Hindu Del"]||0),
+          age18_22:+(row["Age 18–22"]||0),
+          age23_30:+(row["Age 23–30"]||0),
+          age31_39:+(row["Age 31–39"]||0),
+          age40_44:+(row["Age 40–44★"]||0),
+          age45_60:+(row["Age 45–60"]||0),
+          age60p:+(row["Age 60+"]||0),
+          ageUnknown:+(row["Age Unknown"]||0),
+          __source:src.fileName||"",
+          __importedAt:importedAt,
+        };
+        const sig=JSON.stringify({...normalized,__source:undefined,__importedAt:undefined});
+        if(partSigMap[key] && partSigMap[key]!==sig){
+          conflictingCoverage.push({key,files:[byPart[key]?.__source,src.fileName].filter(Boolean)});
+        }else if(partSigMap[key]){
+          duplicateCoverage.push({key,files:[byPart[key]?.__source,src.fileName].filter(Boolean)});
+        }
+        partSigMap[key]=sig;
+        if(!byPart[key] || String(byPart[key].__importedAt||"")<importedAt){
+          byPart[key]=normalized;
+        }
+      });
+    });
+    const partRows=Object.values(byPart).sort((a,b)=>(+a.part_no||0)-(+b.part_no||0));
+    const religionRows=[
+      {religion:"Muslim",total:partRows.reduce((s,r)=>s+r.muslim,0),adj:partRows.reduce((s,r)=>s+r.muslimAdj,0),del:partRows.reduce((s,r)=>s+r.muslimDel,0)},
+      {religion:"Hindu",total:partRows.reduce((s,r)=>s+r.hindu,0),adj:partRows.reduce((s,r)=>s+r.hinduAdj,0),del:partRows.reduce((s,r)=>s+r.hinduDel,0)},
+      {religion:"Uncertain",total:partRows.reduce((s,r)=>s+r.uncertain,0),adj:null,del:null},
+      {religion:"Unknown",total:partRows.reduce((s,r)=>s+r.unknown,0),adj:null,del:null},
+    ].map(r=>({...r,active:r.adj===null?null:(r.total-r.adj-r.del),adjRate:r.adj===null?null:pct(r.adj,r.total),delRate:r.del===null?null:pct(r.del,r.total)}))
+      .filter(r=>r.total>0);
+    const ageRows=[
+      {age:"18–22",total:partRows.reduce((s,r)=>s+r.age18_22,0)},
+      {age:"23–30",total:partRows.reduce((s,r)=>s+r.age23_30,0)},
+      {age:"31–39",total:partRows.reduce((s,r)=>s+r.age31_39,0)},
+      {age:"40–44★",total:partRows.reduce((s,r)=>s+r.age40_44,0)},
+      {age:"45–60",total:partRows.reduce((s,r)=>s+r.age45_60,0)},
+      {age:"60+",total:partRows.reduce((s,r)=>s+r.age60p,0)},
+      {age:"Unknown",total:partRows.reduce((s,r)=>s+r.ageUnknown,0)},
+    ].filter(r=>r.total>0);
+    const totals={
+      total:partRows.reduce((s,r)=>s+r.total,0),
+      adj:partRows.reduce((s,r)=>s+r.adj,0),
+      del:partRows.reduce((s,r)=>s+r.del,0),
+      muslim:partRows.reduce((s,r)=>s+r.muslim,0),
+      hindu:partRows.reduce((s,r)=>s+r.hindu,0),
+      uncertain:partRows.reduce((s,r)=>s+r.uncertain,0),
+      unknown:partRows.reduce((s,r)=>s+r.unknown,0),
+    };
+    const mAR=totals.muslim?partRows.reduce((s,r)=>s+r.muslimAdj,0)/totals.muslim:0;
+    const hAR=totals.hindu?partRows.reduce((s,r)=>s+r.hinduAdj,0)/totals.hindu:0;
+    return {partRows,religionRows,ageRows,totals,mAR,hAR,sourceRows,duplicateCoverage,conflictingCoverage};
+  },[insightSources]);
+  const provenanceRows=useMemo(()=>{
+    const rawRows=Object.entries(loadedFileMeta||{}).map(([name,m])=>({
+      fileName:name,
+      type:"Raw/Voter Workbook",
+      importedAt:m?.importedAt||"",
+      acCoverage:`${m?.acNo||"?"} - ${m?.acName||"?"}`,
+      partCount:(m?.parts||[]).length,
+      rowCount:m?.rowCount||0,
+      duplicateOf:m?.duplicateSemanticOf||m?.duplicateRawOf||"",
+    }));
+    const insightRows=insightSources.map(src=>({
+      fileName:src.fileName||"",
+      type:"Insights Workbook",
+      importedAt:src.importedAt||"",
+      acCoverage:(src.acPairs||[]).map(p=>p.replace("|"," - ")).join("; "),
+      partCount:(src.parts||[]).length,
+      rowCount:(src.partInsights||[]).length,
+      duplicateOf:"",
+    }));
+    return [...rawRows,...insightRows].sort((a,b)=>String(b.importedAt).localeCompare(String(a.importedAt)));
+  },[loadedFileMeta,insightSources]);
+  const provenanceConflicts=useMemo(()=>{
+    const rawByPart={};
+    voters.forEach(v=>{
+      const key=`${String(v.ac_no||"").trim()}|${String(v.ac_name||"").trim()}|${String(v.part_no||"").trim()}`;
+      (rawByPart[key]=rawByPart[key]||new Set()).add(v.sourceFile||"Loaded raw");
+    });
+    const insightByPart={};
+    insightSources.forEach(src=>{
+      (src.partInsights||[]).forEach(r=>{
+        const key=`${String(r["AC No"]||r.ac_no||"").trim()}|${String(r["AC Name"]||r.ac_name||"").trim()}|${String(r["Part Number"]||r.part_no||r.Part||"").trim()}`;
+        if(!key || key==="||") return;
+        (insightByPart[key]=insightByPart[key]||new Set()).add(src.fileName||"Insights");
+      });
+    });
+    const keys=[...new Set([...Object.keys(rawByPart),...Object.keys(insightByPart)])];
+    return keys.map(key=>({
+      key,
+      rawFiles:[...(rawByPart[key]||[])],
+      insightFiles:[...(insightByPart[key]||[])],
+      status:(rawByPart[key]&&insightByPart[key])?"Raw preferred":
+        ((insightByPart[key]&&insightByPart[key].size>1)?"Multiple insights":"Single source"),
+    })).filter(r=>r.rawFiles.length||r.insightFiles.length)
+      .filter(r=>r.rawFiles.length&&r.insightFiles.length || r.insightFiles.length>1);
+  },[voters,insightSources]);
+  useEffect(()=>{
+    if(analysisOnly && !["overview","religion","age","sources","methodology"].includes(tab)){
+      setTab("overview");
+    }
+  },[analysisOnly,tab]);
 
   // ── Global filtered set ─────────────────────────────────────────────────────
   const filtered=useMemo(()=>voters.filter(v=>{
@@ -1397,9 +2310,24 @@ export default function App(){
     });
     return Object.entries(map)
       .filter(([,rows])=>rows.length>1)
-      .map(([key,rows])=>({key,count:rows.length,part:rows[0]?.part_no,voter_id:rows[0]?.voter_id,name:rows[0]?.name,rows}))
+      .map(([key,rows])=>{
+        const sigSet=new Set(rows.map(exactDuplicateSignatureOf));
+        const autoResolved=sigSet.size===1;
+        const manualResolved=!!resolvedDuplicateKeys[key];
+        return {
+          key,
+          count:rows.length,
+          part:rows[0]?.part_no,
+          voter_id:rows[0]?.voter_id,
+          name:rows[0]?.name,
+          rows,
+          autoResolved,
+          resolved:autoResolved||manualResolved,
+          resolution:autoResolved?"auto-exact-match":(manualResolved?"manual":"open"),
+        };
+      })
       .sort((a,b)=>b.count-a.count);
-  },[voters]);
+  },[voters,resolvedDuplicateKeys]);
 
   const fileDuplicateGroups=useMemo(()=>{
     const arr=Object.values(loadedFileMeta||{});
@@ -1411,9 +2339,16 @@ export default function App(){
     });
     return Object.entries(map)
       .filter(([,rows])=>rows.length>1)
-      .map(([hash,rows])=>({hash,count:rows.length,rows:rows.sort((a,b)=>String(a.fileName).localeCompare(String(b.fileName)))}))
+      .map(([hash,rows])=>({
+        hash,
+        count:rows.length,
+        rows:rows.sort((a,b)=>String(a.fileName).localeCompare(String(b.fileName))),
+        autoResolved:true,
+        resolved:true,
+        resolution:resolvedFileHashes[hash]?"manual":"auto-same-content",
+      }))
       .sort((a,b)=>b.count-a.count);
-  },[loadedFileMeta]);
+  },[loadedFileMeta,resolvedFileHashes]);
 
   const partTrendRows=useMemo(()=>{
     const pts=[...new Set(voters.map(v=>v.part_no))].sort((a,b)=>(+a||0)-(+b||0));
@@ -1467,15 +2402,47 @@ export default function App(){
     filtered.forEach(v=>{
       if(!comparePass(v)) return;
       const k=groupVal(v);
-      if(!g[k]) g[k]={group:k,total:0,adj:0,del:0,active:0,m:0,h:0,male:0,female:0};
+      if(!g[k]) g[k]={
+        group:k,total:0,adj:0,del:0,active:0,m:0,h:0,u:0,male:0,female:0,other:0,
+        mAdj:0,hAdj:0,uAdj:0,mDel:0,hDel:0,uDel:0,mActive:0,hActive:0,uActive:0,
+        maleAdj:0,femaleAdj:0,otherAdj:0,maleDel:0,femaleDel:0,otherDel:0,maleActive:0,femaleActive:0,otherActive:0,
+      };
+      const rel=effRel(v);
+      const isMale=String(v.gender||"").toUpperCase().startsWith("M");
+      const isFemale=String(v.gender||"").toUpperCase().startsWith("F");
       g[k].total++;
       if(v.status==="Under Adjudication") g[k].adj++;
       else if(v.status==="Deleted") g[k].del++;
       else g[k].active++;
-      if(effRel(v)==="Muslim") g[k].m++;
-      if(effRel(v)==="Hindu") g[k].h++;
-      if(String(v.gender||"").toUpperCase().startsWith("M")) g[k].male++;
-      if(String(v.gender||"").toUpperCase().startsWith("F")) g[k].female++;
+      if(rel==="Muslim") g[k].m++;
+      else if(rel==="Hindu") g[k].h++;
+      else g[k].u++;
+      if(isMale) g[k].male++;
+      else if(isFemale) g[k].female++;
+      else g[k].other++;
+
+      if(v.status==="Under Adjudication"){
+        if(rel==="Muslim") g[k].mAdj++;
+        else if(rel==="Hindu") g[k].hAdj++;
+        else g[k].uAdj++;
+        if(isMale) g[k].maleAdj++;
+        else if(isFemale) g[k].femaleAdj++;
+        else g[k].otherAdj++;
+      }else if(v.status==="Deleted"){
+        if(rel==="Muslim") g[k].mDel++;
+        else if(rel==="Hindu") g[k].hDel++;
+        else g[k].uDel++;
+        if(isMale) g[k].maleDel++;
+        else if(isFemale) g[k].femaleDel++;
+        else g[k].otherDel++;
+      }else{
+        if(rel==="Muslim") g[k].mActive++;
+        else if(rel==="Hindu") g[k].hActive++;
+        else g[k].uActive++;
+        if(isMale) g[k].maleActive++;
+        else if(isFemale) g[k].femaleActive++;
+        else g[k].otherActive++;
+      }
     });
     const rows=Object.values(g).map(r=>({
       ...r,
@@ -1598,6 +2565,7 @@ export default function App(){
         totalVoters:voters.length,
         parts:[...new Set(voters.map(v=>v.part_no))].length,
         acCoverage:[...new Set(voters.map(v=>`${v.ac_no||"?"}-${v.ac_name||"?"}`))],
+        tokenLearnCount,
       },
       voters,
       overrides,
@@ -1628,6 +2596,7 @@ export default function App(){
       appVersion:payload.appVersion,
       totalVoters:payload.summary.totalVoters,
       totalParts:payload.summary.parts,
+      tokenLearnCount:payload.summary.tokenLearnCount||0,
       theme:payload.ui.theme,
       acCoverage:payload.summary.acCoverage.join("; "),
     }]),"Session_Metadata");
@@ -1639,7 +2608,7 @@ export default function App(){
       acNo:m.acNo||"", acName:m.acName||"", importedAt:m.importedAt||"",
     }))),"Loaded_Files");
     XLSX.writeFile(wb,`${baseName}.xlsx`,{compression:true});
-  },[voters,overrides,tokenOverrides,loadedFiles,loadedFileMeta,chartPrefs,theme,gPart,gStatus,gRel,gAge,gGender,gSearch,tab]);
+  },[voters,overrides,tokenOverrides,tokenLearnCount,loadedFiles,loadedFileMeta,chartPrefs,theme,gPart,gStatus,gRel,gAge,gGender,gSearch,tab]);
 
   const handleImportSessionFile=useCallback(async(file)=>{
     if(!file) return;
@@ -1658,6 +2627,7 @@ export default function App(){
           schemaVersion:(metaRows[0]?.schemaVersion||"eimpack.v1"),
           createdAt:metaRows[0]?.createdAt||new Date().toISOString(),
           appVersion:metaRows[0]?.appVersion||"1.0",
+          tokenLearnCount:Number(metaRows[0]?.tokenLearnCount||0),
           voters:voterRows.map(r=>({
             ac_no:r["AC No"]||r.ac_no||"",
             ac_name:r["AC Name"]||r.ac_name||"",
@@ -1700,6 +2670,7 @@ export default function App(){
         setVoters(indexedIncoming);
         setOverrides(payload.overrides||{});
         setTokenOverrides(payload.tokenOverrides||{});
+        setTokenLearnCount(Number(payload.tokenLearnCount||payload.summary?.tokenLearnCount||0));
         setLoadedFiles(payload.loadedFiles||{});
         setLoadedFileMeta(payload.loadedFileMeta||{});
         if(payload.chartPrefs) setChartPrefs(prev=>({...prev,...payload.chartPrefs}));
@@ -1708,6 +2679,7 @@ export default function App(){
         setVoters(prev=>reindexImportedVoters([...prev,...indexedIncoming]));
         setOverrides(prev=>({...prev,...(payload.overrides||{})}));
         setTokenOverrides(prev=>({...prev,...(payload.tokenOverrides||{})}));
+        setTokenLearnCount(prev=>prev+Number(payload.tokenLearnCount||payload.summary?.tokenLearnCount||0));
         setLoadedFiles(prev=>({...prev,...(payload.loadedFiles||{})}));
         setLoadedFileMeta(prev=>({...prev,...(payload.loadedFileMeta||{})}));
         if(payload.chartPrefs) setChartPrefs(prev=>({...prev,...payload.chartPrefs}));
@@ -2022,6 +2994,42 @@ export default function App(){
     });
   },[theme,voters]);
 
+  const openTableExport=useCallback((cfg)=>{
+    const el=cfg?.containerId?document.getElementById(cfg.containerId):null;
+    const tableEl=el?.querySelector?.("table");
+    const autoWidth=Math.max(
+      760,
+      Math.round(tableEl?.scrollWidth||0),
+      Math.round(el?.scrollWidth||0),
+      Math.round(tableEl?.getBoundingClientRect?.().width||0),
+      Math.round(el?.getBoundingClientRect?.().width||0),
+    );
+    const autoHeight=Math.max(
+      260,
+      Math.round(tableEl?.scrollHeight||0),
+      Math.round(el?.scrollHeight||0),
+      Math.round(tableEl?.getBoundingClientRect?.().height||0),
+      Math.round(el?.getBoundingClientRect?.().height||0),
+    );
+    const reg=EXPORT_REGISTRY.find(r=>r.containerId===cfg?.containerId);
+    const acNo=voters[0]?.ac_no||"-";
+    const acName=voters[0]?.ac_name||"-";
+    setTableExportModal({
+      ...cfg,
+      format:"png",
+      width:autoWidth,
+      height:autoHeight,
+      scale:2,
+      background:normalizeHexColor(C.bg,"#ffffff"),
+      title:cfg?.title||reg?.title||"Table Export",
+      subtitle:cfg?.subtitle||reg?.subtitle||"",
+      note:cfg?.note||`Tabular export · AC ${acNo} · ${acName}`,
+      includeTimestamp:true,
+      borderMode:cfg?.borderMode||"auto",
+      sheetName:cfg?.sheetName||reg?.title||"Data",
+    });
+  },[voters]);
+
   const runChartExport=useCallback(async()=>{
     if(!chartExportModal) return;
     const cfg=chartExportModal;
@@ -2049,6 +3057,36 @@ export default function App(){
     }
   },[chartExportModal]);
 
+  const runTableExport=useCallback(async()=>{
+    if(!tableExportModal) return;
+    const cfg=tableExportModal;
+    try{
+      if(cfg.format==="csv"){
+        exportRowsCsv(cfg.rows||[],cfg.filename||"table_data");
+      }else if(cfg.format==="xlsx"){
+        exportXLSX(cfg.rows||[],cfg.filename||"table_data",cfg.sheetName||"Data");
+      }else{
+        await exportTableGraphic({
+          containerId:cfg.containerId,
+          filename:cfg.filename||"table_export",
+          format:cfg.format||"png",
+          width:+cfg.width||1200,
+          height:+cfg.height||800,
+          scale:+cfg.scale||2,
+          background:normalizeHexColor(cfg.background,normalizeHexColor(C.bg,"#ffffff")),
+          title:cfg.title||"",
+          subtitle:cfg.subtitle||"",
+          note:cfg.note||"",
+          includeTimestamp:!!cfg.includeTimestamp,
+          borderMode:cfg.borderMode||"auto",
+        });
+      }
+      setTableExportModal(null);
+    }catch(err){
+      window.alert(`Export failed: ${err?.message||"unknown error"}`);
+    }
+  },[tableExportModal]);
+
   const chartColor=useMemo(()=>({
     Active:normalizeHexColor(chartPrefs.activeColor,C.active),
     UnderAdj:normalizeHexColor(chartPrefs.underAdjColor,C.adj),
@@ -2058,8 +3096,6 @@ export default function App(){
   }),[chartPrefs,theme]);
 
   const labelPos=chartPrefs.valueLabelPos==="inside"?"insideTop":(chartPrefs.valueLabelPos==="right"?"right":"top");
-
-
 
   // ── TAB: OVERVIEW ───────────────────────────────────────────────────────────
   const renderOverview=()=>{
@@ -2279,12 +3315,26 @@ export default function App(){
     return(
       <div style={{display:"flex",flexDirection:"column",gap:18}}>
         <Panel>
-          <SH onExport={()=>exportTableImage("tblReligionCrosstab","religion_status_crosstab",{
+          <SH onExport={()=>openTableExport({
+            containerId:"tblReligionCrosstab",
+            filename:"religion_status_crosstab",
             title:"Religion x Status Cross-tabulation",
             subtitle:"Counts and rates by religion",
             note:`AC ${voters[0]?.ac_no||"-"} · ${voters[0]?.ac_name||"-"}`,
             background:normalizeHexColor(C.bg,"#ffffff"),
-          }).catch(e=>window.alert(`Export failed: ${e?.message||"unknown error"}`))}>
+            sheetName:"Religion_Status",
+            rows:rows.map(({r,tot,a,d,sm,smA,adjR,delR})=>({
+              Religion:r,
+              Total:tot,
+              Active:tot-a-d,
+              "Under Adj":a,
+              "Adj%":adjR,
+              Deleted:d,
+              "Del%":delR,
+              "Self-mapped":sm,
+              "Self-mapped Adj":smA,
+            })),
+          })}>
             Religion × Status Cross-tabulation
           </SH>
           <div id="tblReligionCrosstab" style={{overflowX:"auto"}}>
@@ -2470,11 +3520,23 @@ export default function App(){
           </div>
         </Panel>
         <Panel>
-          <SH onExport={()=>exportTableImage("tblAgeReligionAdj","age_religion_adjudication_table",{
+          <SH onExport={()=>openTableExport({
+            containerId:"tblAgeReligionAdj",
+            filename:"age_religion_adjudication_table",
             title:"Age x Religion x Adjudication Rate",
             subtitle:"Detailed age-cohort analysis",
             background:normalizeHexColor(C.bg,"#ffffff"),
-          }).catch(e=>window.alert(`Export failed: ${e?.message||"unknown error"}`))}>
+            sheetName:"Age_Religion_Adj",
+            rows:ageData.map(row=>({
+              "Age Group":row.ag,
+              Total:row.total,
+              "Under Adj":row["Under Adj"],
+              "Muslim Adj%":row.mAdjPct,
+              "Hindu Adj%":row.hAdjPct,
+              "Bias Ratio":row.biasR ?? "",
+              Significance:row.chi?.label||"",
+            })),
+          })}>
             Age × Religion × Adjudication Rate
           </SH>
           <div id="tblAgeReligionAdj" style={{overflowX:"auto"}}>
@@ -2546,6 +3608,7 @@ export default function App(){
 
   const renderCustomAnalytics=()=>{
     const metricKey=caMetric;
+    const pctTotal=(n,d)=>d?+((n/d)*100).toFixed(2):0;
     const baseData=customAnalyticsRows.map(r=>({
       group:r.group,
       value:r[metricKey]??0,
@@ -2555,19 +3618,72 @@ export default function App(){
       active:r.active,
       m:r.m,
       h:r.h,
+      u:r.u||0,
       male:r.male||0,
       female:r.female||0,
+      other:r.other||0,
+      mAdj:r.mAdj||0,
+      hAdj:r.hAdj||0,
+      uAdj:r.uAdj||0,
+      mDel:r.mDel||0,
+      hDel:r.hDel||0,
+      uDel:r.uDel||0,
+      mActive:r.mActive||0,
+      hActive:r.hActive||0,
+      uActive:r.uActive||0,
+      maleAdj:r.maleAdj||0,
+      femaleAdj:r.femaleAdj||0,
+      otherAdj:r.otherAdj||0,
+      maleDel:r.maleDel||0,
+      femaleDel:r.femaleDel||0,
+      otherDel:r.otherDel||0,
+      maleActive:r.maleActive||0,
+      femaleActive:r.femaleActive||0,
+      otherActive:r.otherActive||0,
     }));
+    const unsupportedStackCombo=
+      (["muslim_share","hindu_share"].includes(caMetric) && caStackBy==="gender");
+    const effectiveChartMode=(caMode!=="grouped" && unsupportedStackCombo) ? "grouped" : caMode;
     const stackedData=baseData.map(r=>{
       let keys={};
-      if(caStackBy==="religion"){
-        keys={Muslim:r.m||0,Hindu:r.h||0,Uncertain:Math.max(0,(r.total||0)-(r.m||0)-(r.h||0))};
-      }else if(caStackBy==="gender"){
-        keys={Male:r.male||0,Female:r.female||0,Other:Math.max(0,(r.total||0)-(r.male||0)-(r.female||0))};
-      }else{
-        keys={Active:r.active||0,"Under Adj":r.adj||0,Deleted:r.del||0};
+      if(caMetric==="total"){
+        if(caStackBy==="religion"){
+          keys={Muslim:r.m||0,Hindu:r.h||0,Uncertain:r.u||0};
+        }else if(caStackBy==="gender"){
+          keys={Male:r.male||0,Female:r.female||0,Other:r.other||0};
+        }else{
+          keys={Active:r.active||0,"Under Adj":r.adj||0,Deleted:r.del||0};
+        }
+      }else if(caMetric==="adj_rate"){
+        if(caStackBy==="religion"){
+          keys={Muslim:pctTotal(r.mAdj,r.total),Hindu:pctTotal(r.hAdj,r.total),Uncertain:pctTotal(r.uAdj,r.total)};
+        }else if(caStackBy==="gender"){
+          keys={Male:pctTotal(r.maleAdj,r.total),Female:pctTotal(r.femaleAdj,r.total),Other:pctTotal(r.otherAdj,r.total)};
+        }else{
+          keys={Active:0,"Under Adj":pctTotal(r.adj,r.total),Deleted:0};
+        }
+      }else if(caMetric==="del_rate"){
+        if(caStackBy==="religion"){
+          keys={Muslim:pctTotal(r.mDel,r.total),Hindu:pctTotal(r.hDel,r.total),Uncertain:pctTotal(r.uDel,r.total)};
+        }else if(caStackBy==="gender"){
+          keys={Male:pctTotal(r.maleDel,r.total),Female:pctTotal(r.femaleDel,r.total),Other:pctTotal(r.otherDel,r.total)};
+        }else{
+          keys={Active:0,"Under Adj":0,Deleted:pctTotal(r.del,r.total)};
+        }
+      }else if(caMetric==="muslim_share"){
+        if(caStackBy==="religion"){
+          keys={Muslim:pctTotal(r.m,r.total),Hindu:pctTotal(r.h,r.total),Uncertain:pctTotal(r.u,r.total)};
+        }else{
+          keys={Active:pctTotal(r.mActive,r.total),"Under Adj":pctTotal(r.mAdj,r.total),Deleted:pctTotal(r.mDel,r.total)};
+        }
+      }else if(caMetric==="hindu_share"){
+        if(caStackBy==="religion"){
+          keys={Muslim:pctTotal(r.m,r.total),Hindu:pctTotal(r.h,r.total),Uncertain:pctTotal(r.u,r.total)};
+        }else{
+          keys={Active:pctTotal(r.hActive,r.total),"Under Adj":pctTotal(r.hAdj,r.total),Deleted:pctTotal(r.hDel,r.total)};
+        }
       }
-      if(caMode==="stacked100"){
+      if(effectiveChartMode==="stacked100"){
         const denom=Math.max(1,Object.values(keys).reduce((s,n)=>s+(Number(n)||0),0));
         Object.keys(keys).forEach(k=>{ keys[k]=+(((Number(keys[k])||0)/denom)*100).toFixed(2); });
       }
@@ -2596,10 +3712,80 @@ export default function App(){
       Female:C.Hindu,
       Other:C.dim,
     };
+    const stackLabels=(()=>{
+      if(caMetric==="total"){
+        if(caStackBy==="religion") return {Muslim:"Muslim voters",Hindu:"Hindu voters",Uncertain:"Uncertain voters"};
+        if(caStackBy==="gender") return {Male:"Male voters",Female:"Female voters",Other:"Other-gender voters"};
+        return {Active:"Active voters","Under Adj":"Under adjudication",Deleted:"Deleted voters"};
+      }
+      if(caMetric==="adj_rate"){
+        if(caStackBy==="religion") return {Muslim:"Muslim contribution to adj %",Hindu:"Hindu contribution to adj %",Uncertain:"Uncertain contribution to adj %"};
+        if(caStackBy==="gender") return {Male:"Male contribution to adj %",Female:"Female contribution to adj %",Other:"Other contribution to adj %"};
+        return {Active:"Active share","Under Adj":"Under adjudication rate",Deleted:"Deleted share"};
+      }
+      if(caMetric==="del_rate"){
+        if(caStackBy==="religion") return {Muslim:"Muslim contribution to del %",Hindu:"Hindu contribution to del %",Uncertain:"Uncertain contribution to del %"};
+        if(caStackBy==="gender") return {Male:"Male contribution to del %",Female:"Female contribution to del %",Other:"Other contribution to del %"};
+        return {Active:"Active share","Under Adj":"Under adjudication share",Deleted:"Deletion rate"};
+      }
+      if(caMetric==="muslim_share"){
+        if(caStackBy==="religion") return {Muslim:"Muslim share",Hindu:"Non-Muslim Hindu share",Uncertain:"Non-Muslim uncertain share"};
+        return {Active:"Muslim active share","Under Adj":"Muslim UA share",Deleted:"Muslim deleted share"};
+      }
+      if(caMetric==="hindu_share"){
+        if(caStackBy==="religion") return {Muslim:"Non-Hindu Muslim share",Hindu:"Hindu share",Uncertain:"Non-Hindu uncertain share"};
+        return {Active:"Hindu active share","Under Adj":"Hindu UA share",Deleted:"Hindu deleted share"};
+      }
+      return {};
+    })();
+    const isPercentMetric=["adj_rate","del_rate","muslim_share","hindu_share"].includes(caMetric);
+    const preferReadableLongMode=
+      caGroupBy==="part_no" ||
+      baseData.length>12 ||
+      (isPercentMetric && baseData.length>8);
+    const groupedLongMode=effectiveChartMode==="grouped" && preferReadableLongMode;
+    const stackedLongMode=effectiveChartMode!=="grouped" && (
+      caGroupBy==="part_no" ||
+      stackedData.length>10 ||
+      isPercentMetric
+    );
+    const metricMax=Math.max(0,...baseData.map(r=>Number(r.value)||0));
+    const groupedDomain=isPercentMetric
+      ? [0,Math.max(10,Math.min(100,Math.ceil(metricMax*1.25)))]
+      : [0,Math.max(5,Math.ceil(metricMax*1.15))];
+    const groupedChartHeight=Math.max(280,baseData.length*30+50);
+    const stackedCanvasWidth=Math.max(900,(effectiveChartMode==="stacked100"?60:52)*Math.max(1,stackedData.length));
+    const stackedChartHeight=Math.max(320,stackedData.length*32+56);
+    const stackedMax=Math.max(0,...stackedData.map(r=>stackKeys.reduce((s,k)=>s+(Number(r[k])||0),0)));
+    const stackedDomain=effectiveChartMode==="stacked100"
+      ? [0,100]
+      : isPercentMetric
+        ? [0,Math.max(5,Math.min(100,Math.ceil(stackedMax*1.25)))]
+        : [0,Math.max(5,Math.ceil(stackedMax*1.15))];
+    const formatMetricValue=(v)=>{
+      const num=Number(v)||0;
+      return isPercentMetric ? `${num.toFixed(2)}%` : num.toLocaleString();
+    };
+    const metricTooltipFormatter=(v)=>[formatMetricValue(v),metricLabel];
+    const stackedExplanation=effectiveChartMode==="grouped" ? "" : (
+      effectiveChartMode==="stacked100"
+        ? `Each bar is normalized to 100%. Segments show the relative composition of ${metricLabel.toLowerCase()} by ${caStackBy}.`
+        : `Each bar shows absolute contributions to ${metricLabel.toLowerCase()} within each ${caGroupBy==="part_no"?"part":caGroupBy}. Segments are split by ${caStackBy}.`
+    );
     return(
       <div style={{display:"flex",flexDirection:"column",gap:16}}>
         <Panel>
-          <SH>Custom Analytics Builder</SH>
+          <SH sub={
+            unsupportedStackCombo
+              ?"Selected metric/stack pair is not supported for stacked view - showing grouped bars instead."
+              : groupedLongMode
+                ?"Large group count detected - using readable horizontal layout"
+                : stackedLongMode
+                  ?"Large group count detected - using readable horizontal stacked layout"
+                  :"Switch group / metric / mode to explore the filtered dataset"
+          }>
+            Custom Analytics Builder
+          </SH>
           <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
             <select value={caGroupBy} onChange={e=>setCaGroupBy(e.target.value)}
               style={{padding:"6px 10px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,fontSize:12}}>
@@ -2641,45 +3827,112 @@ export default function App(){
             )}
             <button onClick={()=>openChartExport({
               containerId:"chartCustomAnalytics",
-              filename:`custom_${caGroupBy}_${caMetric}_${caMode}`,
-              rows:caMode==="grouped"?baseData:stackedData,
-              chartType:caMode==="grouped"?"Grouped bar":(caMode==="stacked"?"Stacked bar":"100% stacked bar"),
-              note:`Mode: ${caMode} · Stack: ${caMode==="grouped"?"N/A":caStackBy}`,
+              filename:`custom_${caGroupBy}_${caMetric}_${effectiveChartMode}`,
+              rows:effectiveChartMode==="grouped"?baseData:stackedData,
+              chartType:effectiveChartMode==="grouped"?"Grouped bar":(effectiveChartMode==="stacked"?"Stacked bar":"100% stacked bar"),
+              note:`Mode: ${effectiveChartMode} · Stack: ${effectiveChartMode==="grouped"?"N/A":caStackBy}${unsupportedStackCombo?" · Fallback from unsupported stack pair":""}`,
             })}
               style={{padding:"6px 12px",background:C.blue+"22",border:`1px solid ${C.blue}44`,borderRadius:6,color:C.blue,fontSize:12,cursor:"pointer"}}>
               Export Chart
             </button>
           </div>
           <div id="chartCustomAnalytics">
-            <ResponsiveContainer width="100%" height={280}>
-              <BarChart data={caMode==="grouped"?baseData:stackedData} margin={{top:20,right:20,left:0,bottom:60}}>
-                <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
-                <XAxis dataKey="group" tick={{fill:C.muted,fontSize:10}} angle={-30} textAnchor="end" interval={0}/>
-                <YAxis tick={{fill:C.muted,fontSize:11}} domain={caMode==="stacked100"?[0,100]:"auto"}/>
-                <Tooltip {...TT}/>
-                {chartPrefs.showLegend&&<Legend iconSize={10} wrapperStyle={{fontSize:11}}/>}
-                {caMode==="grouped" ? (
-                  <Bar dataKey="value" name={metricLabel} fill={C.blue} radius={[4,4,0,0]}>
-                    {chartPrefs.showValueLabels&&<LabelList dataKey="value" position="top" formatter={(v)=>typeof v==="number"?v.toFixed(2):v} style={{fill:C.dim,fontSize:10}}/>}
-                  </Bar>
-                ) : (
-                  stackKeys.map((k,idx)=>(
-                    <Bar key={k} dataKey={k} stackId="s" name={k} fill={stackColors[k]||C.blue} radius={idx===stackKeys.length-1?[4,4,0,0]:undefined}>
-                      {chartPrefs.showValueLabels&&<LabelList dataKey={k} position={caMode==="stacked100"?"insideTop":"top"} style={{fill:C.dim,fontSize:10}}/>}
-                    </Bar>
-                  ))
-                )}
-              </BarChart>
-            </ResponsiveContainer>
+            {effectiveChartMode==="grouped" ? (
+              <div style={{height:groupedLongMode?420:300,overflowY:groupedLongMode?"auto":"visible",overflowX:"hidden",
+                border:`1px solid ${C.border}`,borderRadius:10,padding:groupedLongMode?12:0}}>
+                <div style={{height:groupedLongMode?groupedChartHeight:280}}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={baseData}
+                      layout={groupedLongMode?"vertical":"horizontal"}
+                      margin={groupedLongMode?{top:8,right:30,left:10,bottom:8}:{top:20,right:20,left:0,bottom:60}}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
+                      {groupedLongMode ? (
+                        <>
+                          <XAxis type="number" tick={{fill:C.muted,fontSize:10}}
+                            domain={groupedDomain}
+                            tickFormatter={v=>isPercentMetric?`${v}%`:v}/>
+                          <YAxis type="category" dataKey="group" width={90} tick={{fill:C.muted,fontSize:11}}/>
+                          <Tooltip {...TT} formatter={metricTooltipFormatter}/>
+                          {chartPrefs.showLegend&&<Legend iconSize={10} wrapperStyle={{fontSize:11}}/>}
+                          <Bar dataKey="value" name={metricLabel} fill={C.blue} radius={[0,4,4,0]} maxBarSize={18} isAnimationActive={false}>
+                            {chartPrefs.showValueLabels&&<LabelList dataKey="value" position="right" formatter={formatMetricValue} style={{fill:C.blue,fontSize:10,fontWeight:700}}/>}
+                          </Bar>
+                        </>
+                      ) : (
+                        <>
+                          <XAxis dataKey="group" tick={{fill:C.muted,fontSize:10}} angle={-30} textAnchor="end" interval={0}/>
+                          <YAxis tick={{fill:C.muted,fontSize:11}} domain={groupedDomain} tickFormatter={v=>isPercentMetric?`${v}%`:v}/>
+                          <Tooltip {...TT} formatter={metricTooltipFormatter}/>
+                          {chartPrefs.showLegend&&<Legend iconSize={10} wrapperStyle={{fontSize:11}}/>}
+                          <Bar dataKey="value" name={metricLabel} fill={C.blue} radius={[4,4,0,0]} isAnimationActive={false}>
+                            {chartPrefs.showValueLabels&&<LabelList dataKey="value" position="top" formatter={formatMetricValue} style={{fill:C.dim,fontSize:10}}/>}
+                          </Bar>
+                        </>
+                      )}
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            ) : (
+              <div style={{overflowX:stackedLongMode?"hidden":"auto",overflowY:stackedLongMode?"auto":"hidden",paddingBottom:4,border:`1px solid ${C.border}`,borderRadius:10,padding:stackedLongMode?12:0}}>
+                <div style={{width:stackedLongMode?"100%":stackedCanvasWidth,height:stackedLongMode?stackedChartHeight:300}}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={stackedData} layout={stackedLongMode?"vertical":"horizontal"} margin={stackedLongMode?{top:8,right:30,left:10,bottom:8}:{top:20,right:20,left:0,bottom:60}}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
+                      {stackedLongMode ? (
+                        <>
+                          <XAxis type="number" tick={{fill:C.muted,fontSize:10}} domain={stackedDomain} tickFormatter={v=>isPercentMetric?`${v}%`:v}/>
+                          <YAxis type="category" dataKey="group" width={90} tick={{fill:C.muted,fontSize:11}}/>
+                        </>
+                      ) : (
+                        <>
+                          <XAxis dataKey="group" tick={{fill:C.muted,fontSize:10}} angle={-30} textAnchor="end" interval={0}/>
+                          <YAxis tick={{fill:C.muted,fontSize:11}} domain={stackedDomain} tickFormatter={v=>isPercentMetric?`${v}%`:v}/>
+                        </>
+                      )}
+                      <Tooltip {...TT} formatter={(v,n)=>[effectiveChartMode==="stacked100"?`${v}%`:formatMetricValue(v),stackLabels[n]||n]}/>
+                      {chartPrefs.showLegend&&<Legend iconSize={10} wrapperStyle={{fontSize:11}}/>}
+                      {stackKeys.map((k,idx)=>(
+                        <Bar key={k} dataKey={k} stackId="s" name={stackLabels[k]||k} minPointSize={3} maxBarSize={18} fill={stackColors[k]||C.blue} radius={idx===stackKeys.length-1?(stackedLongMode?[0,4,4,0]:[4,4,0,0]):undefined} isAnimationActive={false}>
+                          {chartPrefs.showValueLabels&&<LabelList dataKey={k} position={effectiveChartMode==="stacked100"?(stackedLongMode?"insideRight":"insideTop"):(stackedLongMode?"right":"top")} formatter={v=>effectiveChartMode==="stacked100"?`${v}%`:formatMetricValue(v)} style={{fill:C.dim,fontSize:10}}/>}
+                        </Bar>
+                      ))}
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            )}
           </div>
+          {stackedExplanation&&(
+            <div style={{marginTop:8,fontSize:11,color:C.dim,lineHeight:1.5}}>
+              {stackedExplanation}
+            </div>
+          )}
         </Panel>
         <Panel>
           <SH sub={`${customAnalyticsRows.length} groups`}
-            onExport={()=>exportTableImage("tblCustomAnalytics",`custom_analytics_table_${caMode}`,{
+            onExport={()=>openTableExport({
+              containerId:"tblCustomAnalytics",
+              filename:`custom_analytics_table_${caMode}`,
               title:"Custom Analytics Table",
               subtitle:`Mode: ${caMode} · Stack: ${caStackBy}`,
               background:normalizeHexColor(C.bg,"#ffffff"),
-            }).catch(e=>window.alert(`Export failed: ${e?.message||"unknown error"}`))}>
+              sheetName:"Custom_Analytics",
+              rows:customAnalyticsRows.map(r=>({
+                Group:r.group,
+                Total:r.total,
+                Active:r.active,
+                Adj:r.adj,
+                Del:r.del,
+                "Adj%":r.adj_rate,
+                "Del%":r.del_rate,
+                Muslim:r.m,
+                Hindu:r.h,
+                "Muslim%":r.muslim_share,
+                "Hindu%":r.hindu_share,
+              })),
+            })}>
             Custom Analysis Table
           </SH>
           <div id="tblCustomAnalytics" style={{overflowX:"auto"}}>
@@ -2912,11 +4165,26 @@ export default function App(){
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
             <SH>All Booths — Summary ({parts.length} parts)</SH>
             <div style={{display:"flex",gap:8}}>
-              <button onClick={()=>exportTableImage("tblBoothSummary","booths_summary_table",{
+              <button onClick={()=>openTableExport({
+                containerId:"tblBoothSummary",
+                filename:"booths_summary_table",
                 title:"All Booths Summary",
                 subtitle:`${parts.length} parts`,
                 background:normalizeHexColor(C.bg,"#ffffff"),
-              }).catch(e=>window.alert(`Export failed: ${e?.message||"unknown error"}`))}
+                sheetName:"Booth_Summary",
+                rows:boothStats.map(row=>({
+                  Part:row.pt,
+                  Total:row.total,
+                  Adj:row.adj,
+                  "Adj%":row.adjPct,
+                  Del:row.del,
+                  "Mus Adj%":row.mAdjPct,
+                  "Hnd Adj%":row.hAdjPct,
+                  Bias:row.biasR ?? "",
+                  "SM Adj":row.smAdj,
+                  "Manual Edits":row.overrideCount,
+                })),
+              })}
                 style={{padding:"5px 12px",background:C.panel,border:`1px solid ${C.border}`,
                   borderRadius:6,color:C.muted,fontSize:12,cursor:"pointer",fontFamily:FONT}}>
                 🖼 Export Image
@@ -2977,11 +4245,15 @@ export default function App(){
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap",gap:8}}>
               <SH>Part {boothPart} — Voter List ({boothVoters.length.toLocaleString()} voters)</SH>
               <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-                <button onClick={()=>exportTableImage("tblBoothVoterList",`booth_part_${boothPart}_table`,{
+                <button onClick={()=>openTableExport({
+                  containerId:"tblBoothVoterList",
+                  filename:`booth_part_${boothPart}_table`,
                   title:`Part ${boothPart} Voter List`,
                   subtitle:`${boothVoters.length.toLocaleString()} voters`,
                   background:normalizeHexColor(C.bg,"#ffffff"),
-                }).catch(e=>window.alert(`Export failed: ${e?.message||"unknown error"}`))}
+                  sheetName:`Part_${boothPart}`,
+                  rows:boothVoters.map(v=>toExportRow({...v,override:overrides[v._uid]||null})),
+                })}
                   style={{padding:"4px 10px",background:C.panel,border:`1px solid ${C.border}`,
                     borderRadius:5,color:C.muted,fontSize:11,cursor:"pointer",fontFamily:FONT}}>
                   🖼 Export Image
@@ -3164,6 +4436,23 @@ export default function App(){
     const page_data=sorted.slice(vPage*PAGE_SIZE,(vPage+1)*PAGE_SIZE);
     const totalPages=Math.ceil(sorted.length/PAGE_SIZE);
     const doSort=k=>{if(vSort===k)setVSortD(d=>d==="asc"?"desc":"asc");else{setVSort(k);setVSortD("asc");}};
+    const filterMeta={
+      part:gPart==="all"?"All Parts":gPart,
+      status:gStatus==="all"?"All Statuses":gStatus,
+      religion:gRel==="all"?"All Religions":gRel,
+      age:gAge==="all"?"All Ages":gAge,
+      gender:gGender==="all"?"All Genders":gGender,
+      search:gSearch||"",
+    };
+    const filterSlug=[
+      gPart!=="all"?`part-${gPart}`:null,
+      gStatus!=="all"?`status-${gStatus}`:null,
+      gRel!=="all"?`rel-${gRel}`:null,
+      gAge!=="all"?`age-${gAge}`:null,
+      gGender!=="all"?`gender-${gGender}`:null,
+      gSearch?`search-${gSearch.slice(0,18)}`:null,
+    ].filter(Boolean).join("_").replace(/[^a-zA-Z0-9_-]+/g,"-");
+    const filteredRows=filtered.map(v=>toExportRow({...v,override:overrides[v._uid]||null}));
     return(
       <div style={{display:"flex",flexDirection:"column",gap:14}}>
         <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
@@ -3174,20 +4463,36 @@ export default function App(){
             </span>}
           </span>
           <div style={{display:"flex",gap:8}}>
-            <button onClick={()=>exportTableImage("tblVotersGlobal","voters_table",{
+            <button onClick={()=>openTableExport({
+              containerId:"tblVotersGlobal",
+              filename:"voters_table",
               title:"Voters Table",
               subtitle:`Filtered records: ${filtered.length.toLocaleString()}`,
               background:normalizeHexColor(C.bg,"#ffffff"),
-            }).catch(e=>window.alert(`Export failed: ${e?.message||"unknown error"}`))}
+              sheetName:"Filtered_Voters",
+              rows:filteredRows,
+            })}
               style={{padding:"5px 12px",background:C.panel,border:`1px solid ${C.border}`,
                 borderRadius:6,color:C.muted,fontSize:12,cursor:"pointer",fontFamily:FONT}}>
               🖼 Export Image
             </button>
-            <button onClick={()=>exportXLSX(filtered.map(v=>toExportRow({...v,override:overrides[v._uid]||null})),
-              `FilteredVoters_${new Date().toISOString().slice(0,10)}.xlsx`,"Voters")}
+            <button onClick={()=>exportFilteredDatasetWorkbook(
+              filtered.map(v=>({...v,override:overrides[v._uid]||null})),
+              {
+                filters:filterMeta,
+                scope:"Filtered voters view",
+                filename:`FilteredVoters_${filterSlug||"all"}_${new Date().toISOString().slice(0,10)}.xlsx`,
+              }
+            )}
               style={{padding:"5px 12px",background:C.blue+"22",border:`1px solid ${C.blue}44`,
                 borderRadius:6,color:C.blue,fontSize:12,cursor:"pointer",fontFamily:FONT}}>
-              📥 Export Filtered ({filtered.length})
+              📥 Export Filtered Workbook
+            </button>
+            <button onClick={()=>exportRowsCsv(filteredRows,
+              `FilteredVoters_${filterSlug||"all"}_${new Date().toISOString().slice(0,10)}`)}
+              style={{padding:"5px 12px",background:C.panel,border:`1px solid ${C.border}`,
+                borderRadius:6,color:C.muted,fontSize:12,cursor:"pointer",fontFamily:FONT}}>
+              CSV
             </button>
             <button onClick={()=>exportFullDataset(voters.map(v=>({...v,override:overrides[v._uid]||null})))}
               style={{padding:"5px 12px",background:C.green+"22",border:`1px solid ${C.green}44`,
@@ -3380,11 +4685,27 @@ export default function App(){
             style={{flex:"1 1 180px",padding:"7px 10px",background:C.panel,
               border:`1px solid ${C.border}`,borderRadius:7,color:C.text,
               fontSize:12,fontFamily:FONT,minWidth:0}}/>
-          <button onClick={()=>exportTableImage("tblReviewQueue","review_queue_table",{
+          <button onClick={()=>openTableExport({
+            containerId:"tblReviewQueue",
+            filename:"review_queue_table",
             title:"Religion Review Queue",
             subtitle:`Pending rows: ${queue.length}`,
             background:normalizeHexColor(C.bg,"#ffffff"),
-          }).catch(e=>window.alert(`Export failed: ${e?.message||"unknown error"}`))}
+            sheetName:"Review_Queue",
+            rows:queue.map(v=>({
+              Part:v.part_no,
+              "Voter ID":v.voter_id,
+              Name:v.name,
+              "Relation Type":v.relation_type||"",
+              "Relation Name":v.relation_name||"",
+              Age:v.age,
+              Gender:v.gender,
+              Status:v.status,
+              "Religion (Auto)":v.religion,
+              "Religion Via":v.relVia,
+              Override:overrides[v._uid]||"",
+            })),
+          })}
             style={{padding:"6px 10px",background:C.panel,border:`1px solid ${C.border}`,borderRadius:7,color:C.muted,fontSize:12,cursor:"pointer"}}>
             Export Image
           </button>
@@ -3535,10 +4856,27 @@ export default function App(){
 
   // ── TAB: DUPLICATES ──────────────────────────────────────────────────────────
   const renderDuplicates=()=>{
+    const DUP_WINDOW=100;
+    const statusPass=(g)=>{
+      if(dupStatusFilter==="all") return true;
+      if(dupStatusFilter==="open") return !g.resolved;
+      if(dupStatusFilter==="auto") return !!g.autoResolved;
+      if(dupStatusFilter==="manual") return !g.autoResolved && !!g.resolved;
+      return true;
+    };
+    const filteredDuplicateGroups=duplicateGroups.filter(statusPass);
+    const filteredFileDuplicateGroups=fileDuplicateGroups.filter(statusPass);
     const totalDupRows=duplicateGroups.reduce((s,g)=>s+g.count,0);
-    const dupFileRows=fileDuplicateGroups.flatMap(g=>g.rows.map(r=>({
+    const autoResolvedDupGroups=duplicateGroups.filter(g=>g.autoResolved).length;
+    const manualResolvedDupGroups=duplicateGroups.filter(g=>!g.autoResolved&&g.resolved).length;
+    const openDupGroups=duplicateGroups.filter(g=>!g.resolved);
+    const visibleDupGroups=filteredDuplicateGroups.slice(0,500);
+    const visibleOpenDupGroups=visibleDupGroups.filter(g=>!g.resolved);
+    const visibleFileGroups=filteredFileDuplicateGroups.slice(0,DUP_WINDOW);
+    const dupFileRows=filteredFileDuplicateGroups.flatMap(g=>g.rows.map(r=>({
       "Hash":g.hash,
       "Group Size":g.count,
+      "Resolution": g.resolution,
       "File":r.fileName,
       "Rows":r.rowCount||"",
       "Size(bytes)":r.size||"",
@@ -3549,19 +4887,61 @@ export default function App(){
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))",gap:8}}>
           <StatCard label="Duplicate Row Groups" value={duplicateGroups.length} color={duplicateGroups.length?C.orange:C.green}/>
           <StatCard label="Duplicate Rows (grouped)" value={totalDupRows} color={totalDupRows?C.orange:C.green}/>
+          <StatCard label="Open Row Groups" value={openDupGroups.length} color={openDupGroups.length?C.red:C.green}/>
+          <StatCard label="Auto-resolved Rows" value={autoResolvedDupGroups} color={C.blue}/>
+          <StatCard label="Manual-resolved Rows" value={manualResolvedDupGroups} color={C.green}/>
           <StatCard label="Duplicate File Groups" value={fileDuplicateGroups.length} color={fileDuplicateGroups.length?C.orange:C.green}/>
           <StatCard label="Tracked Files" value={Object.keys(loadedFileMeta||{}).length} color={C.blue}/>
         </div>
 
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+          <span style={{fontSize:11,color:C.dim}}>Show:</span>
+          {[
+            ["All","all",duplicateGroups.length+fileDuplicateGroups.length],
+            ["Open","open",openDupGroups.length],
+            ["Auto","auto",autoResolvedDupGroups+fileDuplicateGroups.filter(g=>g.autoResolved).length],
+            ["Manual","manual",manualResolvedDupGroups+fileDuplicateGroups.filter(g=>!g.autoResolved&&g.resolved).length],
+          ].map(([label,val,count])=>(
+            <button key={val} onClick={()=>setDupStatusFilter(val)}
+              style={{padding:"6px 12px",borderRadius:7,fontSize:12,cursor:"pointer",
+                fontFamily:FONT,whiteSpace:"nowrap",
+                background:dupStatusFilter===val?C.yellow+"33":"transparent",
+                border:`1px solid ${dupStatusFilter===val?C.yellow:C.border}`,
+                color:dupStatusFilter===val?C.yellow:C.muted}}>
+              {label} ({count})
+            </button>
+          ))}
+        </div>
+
         <Panel>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,flexWrap:"wrap",gap:8}}>
-            <SH>Same-content Files (Hash Match)</SH>
+            <SH sub="Same-content file groups are auto-resolved, but still reported for audit trail.">Same-content Files (Hash Match)</SH>
             <div style={{display:"flex",gap:6}}>
-              <button onClick={()=>exportTableImage("tblSameContentFiles","duplicate_files_table",{
+              <button onClick={()=>setResolvedFileHashes(prev=>{
+                const next={...prev};
+                visibleFileGroups.forEach(g=>{ next[g.hash]=true; });
+                return next;
+              })}
+                style={{padding:"5px 10px",background:C.panel,border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontSize:11,cursor:"pointer"}}>
+                Resolve Window
+              </button>
+              <button onClick={()=>setResolvedFileHashes(prev=>{
+                const next={...prev};
+                filteredFileDuplicateGroups.forEach(g=>{ next[g.hash]=true; });
+                return next;
+              })}
+                style={{padding:"5px 10px",background:C.green+"22",border:`1px solid ${C.green}44`,borderRadius:6,color:C.green,fontSize:11,cursor:"pointer"}}>
+                Resolve All
+              </button>
+              <button onClick={()=>openTableExport({
+                containerId:"tblSameContentFiles",
+                filename:"duplicate_files_table",
                 title:"Same-content Files (Hash Match)",
                 subtitle:"Duplicate file-content groups",
                 background:normalizeHexColor(C.bg,"#ffffff"),
-              }).catch(e=>window.alert(`Export failed: ${e?.message||"unknown error"}`))}
+                sheetName:"Duplicate_Files",
+                rows:dupFileRows,
+              })}
                 style={{padding:"5px 10px",background:C.panel,border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontSize:11,cursor:"pointer"}}>
                 Export Image
               </button>
@@ -3574,20 +4954,29 @@ export default function App(){
           <div id="tblSameContentFiles" style={{overflowX:"auto"}}>
             <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,minWidth:720}}>
               <thead><tr style={{borderBottom:`1px solid ${C.border}`}}>
-                {["Hash (short)","Count","Files","Rows per File"].map(h=>(
+                {["Hash (short)","Count","Status","Files","Rows per File","Action"].map(h=>(
                   <th key={h} style={{padding:"7px 8px",textAlign:h==="Files"?"left":"right",color:C.dim,fontSize:10,textTransform:"uppercase"}}>{h}</th>
                 ))}
               </tr></thead>
               <tbody>
-                {fileDuplicateGroups.length===0&&(
-                  <tr><td colSpan={4} style={{padding:16,textAlign:"center",color:C.dim}}>No same-content duplicate files detected.</td></tr>
+                {filteredFileDuplicateGroups.length===0&&(
+                  <tr><td colSpan={6} style={{padding:16,textAlign:"center",color:C.dim}}>No same-content duplicate files detected.</td></tr>
                 )}
-                {fileDuplicateGroups.map(g=>(
+                {filteredFileDuplicateGroups.map(g=>(
                   <tr key={g.hash} style={{borderBottom:`1px solid ${C.border}22`}}>
                     <td style={{padding:"7px 8px",fontFamily:MONO,color:C.muted}}>{String(g.hash).slice(0,14)}...</td>
                     <td style={{padding:"7px 8px",textAlign:"right",color:C.orange,fontWeight:700}}>{g.count}</td>
+                    <td style={{padding:"7px 8px",textAlign:"right"}}>
+                      <Tag c={g.resolution==="auto-same-content"?"AUTO":g.resolution==="manual"?"MANUAL":"OPEN"} color={g.resolved?C.green:C.orange}/>
+                    </td>
                     <td style={{padding:"7px 8px",color:C.text}}>{g.rows.map(r=>r.fileName).join(", ")}</td>
                     <td style={{padding:"7px 8px",textAlign:"right",color:C.muted}}>{g.rows.map(r=>r.rowCount||0).join(", ")}</td>
+                    <td style={{padding:"7px 8px",textAlign:"right"}}>
+                      <button onClick={()=>setResolvedFileHashes(prev=>({...prev,[g.hash]:!prev[g.hash]}))}
+                        style={{padding:"4px 8px",background:C.panel,border:`1px solid ${C.border}`,borderRadius:5,color:C.blue,fontSize:11,cursor:"pointer"}}>
+                        {resolvedFileHashes[g.hash]?"Re-open":"Resolve"}
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -3597,19 +4986,54 @@ export default function App(){
 
         <Panel>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,flexWrap:"wrap",gap:8}}>
-            <SH>Duplicate Voter Rows (Part + Voter ID / fallback key)</SH>
+            <SH sub="Exact duplicates are auto-resolved. Remaining groups can be resolved one by one, by current window, or all at once.">
+              Duplicate Voter Rows (Part + Voter ID / fallback key)
+            </SH>
             <div style={{display:"flex",gap:6}}>
-              <button onClick={()=>exportTableImage("tblDuplicateVoters","duplicate_voter_rows_table",{
+              <button onClick={()=>setResolvedDuplicateKeys(prev=>{
+                const next={...prev};
+                visibleOpenDupGroups.forEach(g=>{ next[g.key]=true; });
+                return next;
+              })}
+                style={{padding:"5px 10px",background:C.panel,border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontSize:11,cursor:"pointer"}}>
+                Resolve Window
+              </button>
+              <button onClick={()=>setResolvedDuplicateKeys(prev=>{
+                const next={...prev};
+                filteredDuplicateGroups.filter(g=>!g.autoResolved).forEach(g=>{ next[g.key]=true; });
+                return next;
+              })}
+                style={{padding:"5px 10px",background:C.green+"22",border:`1px solid ${C.green}44`,borderRadius:6,color:C.green,fontSize:11,cursor:"pointer"}}>
+                Resolve All
+              </button>
+              <button onClick={()=>openTableExport({
+                containerId:"tblDuplicateVoters",
+                filename:"duplicate_voter_rows_table",
                 title:"Duplicate Voter Rows",
                 subtitle:"Part + voter key duplicates",
                 background:normalizeHexColor(C.bg,"#ffffff"),
-              }).catch(e=>window.alert(`Export failed: ${e?.message||"unknown error"}`))}
+                sheetName:"Duplicate_Rows",
+                rows:filteredDuplicateGroups.flatMap(g=>g.rows.map(v=>({
+                  "Duplicate Key":g.key,
+                  "Group Size":g.count,
+                  Resolution:g.resolution,
+                  Part:v.part_no,
+                  Serial:v.serial_no,
+                  "Voter ID":v.voter_id,
+                  Name:v.name,
+                  Relation:v.relation_name,
+                  Age:v.age,
+                  Gender:v.gender,
+                  Status:v.status,
+                  "Source File":v.sourceFile,
+                }))),
+              })}
                 style={{padding:"5px 10px",background:C.panel,border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontSize:11,cursor:"pointer"}}>
                 Export Image
               </button>
               <button onClick={()=>{
-                const rows=duplicateGroups.flatMap(g=>g.rows.map(v=>({
-                  "Duplicate Key":g.key,"Group Size":g.count,"Part":v.part_no,"Serial":v.serial_no,"Voter ID":v.voter_id,
+                const rows=filteredDuplicateGroups.flatMap(g=>g.rows.map(v=>({
+                  "Duplicate Key":g.key,"Group Size":g.count,"Resolution":g.resolution,"Part":v.part_no,"Serial":v.serial_no,"Voter ID":v.voter_id,
                   "Name":v.name,"Relation":v.relation_name,"Age":v.age,"Gender":v.gender,"Status":v.status,"Source File":v.sourceFile
                 })));
                 exportXLSX(rows,`Duplicate_Rows_${new Date().toISOString().slice(0,10)}.xlsx`,"Duplicate_Rows");
@@ -3623,23 +5047,34 @@ export default function App(){
             <table style={{width:"100%",borderCollapse:"collapse",fontSize:11,minWidth:800}}>
               <thead style={{position:"sticky",top:0,background:C.panel}}>
                 <tr style={{borderBottom:`1px solid ${C.border}`}}>
-                  {["Count","Part","Voter ID","Name","Files","Key"].map(h=>(
+                  {["Count","Part","Voter ID","Name","Status","Files","Key","Action"].map(h=>(
                     <th key={h} style={{padding:"6px 8px",textAlign:h==="Name"||h==="Files"||h==="Key"?"left":"right",color:C.dim,fontSize:10,textTransform:"uppercase"}}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {duplicateGroups.length===0&&(
-                  <tr><td colSpan={6} style={{padding:14,textAlign:"center",color:C.dim}}>No duplicate voter groups detected.</td></tr>
+                {filteredDuplicateGroups.length===0&&(
+                  <tr><td colSpan={8} style={{padding:14,textAlign:"center",color:C.dim}}>No duplicate voter groups detected.</td></tr>
                 )}
-                {duplicateGroups.slice(0,500).map(g=>(
-                  <tr key={g.key} style={{borderBottom:`1px solid ${C.border}22`}}>
+                {visibleDupGroups.map(g=>(
+                  <tr key={g.key} style={{borderBottom:`1px solid ${C.border}22`,background:g.autoResolved?C.blue+"10":g.resolved?C.green+"10":""}}>
                     <td style={{padding:"6px 8px",textAlign:"right",color:C.orange,fontWeight:700}}>{g.count}</td>
                     <td style={{padding:"6px 8px",textAlign:"right",color:C.muted}}>{g.part}</td>
                     <td style={{padding:"6px 8px",textAlign:"right",fontFamily:MONO,color:C.muted}}>{g.voter_id||"—"}</td>
                     <td style={{padding:"6px 8px",color:C.text}}>{g.name||"—"}</td>
+                    <td style={{padding:"6px 8px",textAlign:"right"}}>
+                      <Tag c={g.resolution==="auto-exact-match"?"AUTO":g.resolution==="manual"?"MANUAL":"OPEN"} color={g.resolved?C.green:C.orange}/>
+                    </td>
                     <td style={{padding:"6px 8px",color:C.dim}}>{[...new Set(g.rows.map(r=>r.sourceFile))].join(", ")}</td>
                     <td style={{padding:"6px 8px",fontFamily:MONO,color:C.dim}}>{g.key}</td>
+                    <td style={{padding:"6px 8px",textAlign:"right"}}>
+                      {!g.autoResolved&&(
+                        <button onClick={()=>setResolvedDuplicateKeys(prev=>({...prev,[g.key]:!prev[g.key]}))}
+                          style={{padding:"4px 8px",background:C.panel,border:`1px solid ${C.border}`,borderRadius:5,color:C.blue,fontSize:11,cursor:"pointer"}}>
+                          {g.resolved?"Re-open":"Resolve"}
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -4196,10 +5631,9 @@ export default function App(){
     );
   };
 
-  const renderMethodology=()=>(
-    <div style={{display:"flex",flexDirection:"column",gap:14,maxWidth:820}}>
-      {[
-        ["🧠 Religion Classifier v3",
+  const renderMethodology=()=>{
+    const blocks=[
+      ["🧠 Religion Classifier v3",
 `Training data: 68,118 manually labelled WB voter names
   Muslim: 11,939 (17.5%)  |  Hindu/Other: 56,179 (82.5%)
 Token vocabulary: 5,146 tokens (≥3 occurrences in training set)
@@ -4253,7 +5687,7 @@ Statistical test: Pearson χ² (df=1, 2×2 table, no Yates' correction)
 Manual overrides: shown in yellow ✎ · exported as "Religion (Final)" column
 Auto-classification: exported as "Religion (Auto)" with confidence %`],
 
-        ["📋 Expected Data Format",
+      ["📋 Expected Data Format",
 `Excel sheet named "Voter Roll" with columns:
   ac_no, ac_name, part_no, serial_no, voter_id, name,
   relation_type, relation_name, house_no, age, gender,
@@ -4268,19 +5702,230 @@ Export format (boothwise + full):
   Full: Religion (Auto), Religion (Final), Confidence%, Via, Self-mapped flag
 
 Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
-      ].map(([t,b])=>(
+    ];
+
+    return(
+      <div style={{display:"flex",flexDirection:"column",gap:14,maxWidth:980}}>
+        {blocks.map(([t,b])=>(
         <Panel key={t}>
           <div style={{fontSize:14,fontWeight:700,color:C.blue,marginBottom:10}}>{t}</div>
           <pre style={{fontSize:11.5,color:C.muted,lineHeight:1.9,whiteSpace:"pre-wrap",fontFamily:MONO,margin:0}}>{b}</pre>
         </Panel>
-      ))}
-    </div>
-  );
+        ))}
+
+        <Panel>
+          <div style={{fontSize:14,fontWeight:700,color:C.blue,marginBottom:6}}>🧾 ECI PDF → Excel Workflow (Claude Vision)</div>
+          <div style={{fontSize:12,color:C.muted,lineHeight:1.7,marginBottom:10}}>
+            We converted image-based ECI voter-roll PDFs into structured Excel using Claude AI (file upload + extraction prompt), then imported those XLSX files into this tool.
+          </div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
+            <button onClick={()=>copyPlainText(CLAUDE_VOLUNTEER_MESSAGE,"Volunteer request message")}
+              style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${C.border}`,background:C.panel,color:C.text,cursor:"pointer",fontSize:12}}>
+              Copy Volunteer Message
+            </button>
+            <button onClick={()=>copyPlainText(CLAUDE_EXTRACTION_PROMPT,"Claude extraction prompt")}
+              style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${C.border}`,background:C.panel,color:C.text,cursor:"pointer",fontSize:12}}>
+              Copy Claude Prompt
+            </button>
+          </div>
+          <div style={{display:"grid",gap:12}}>
+            <div style={{border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
+              <div style={{padding:"8px 10px",fontSize:12,fontWeight:700,color:C.text,background:C.panel}}>Volunteer Request Message (Bangla)</div>
+              <pre style={{margin:0,padding:10,maxHeight:260,overflow:"auto",fontSize:11.5,color:C.muted,lineHeight:1.8,whiteSpace:"pre-wrap",fontFamily:MONO}}>{CLAUDE_VOLUNTEER_MESSAGE}</pre>
+            </div>
+            <div style={{border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
+              <div style={{padding:"8px 10px",fontSize:12,fontWeight:700,color:C.text,background:C.panel}}>Claude Prompt (PDF → XLSX Extraction)</div>
+              <pre style={{margin:0,padding:10,maxHeight:300,overflow:"auto",fontSize:11.5,color:C.muted,lineHeight:1.7,whiteSpace:"pre-wrap",fontFamily:MONO}}>{CLAUDE_EXTRACTION_PROMPT}</pre>
+            </div>
+          </div>
+          <div style={{marginTop:10,fontSize:12,color:C.text,lineHeight:1.8}}>
+            Contribute extracted Excel files at: <b>wbsir2025@gmail.com</b> or <b>wbsir2026@gmail.com</b>
+          </div>
+        </Panel>
+      </div>
+    );
+  };
+
+  const renderSources=()=>{
+    return(
+      <div style={{display:"flex",flexDirection:"column",gap:16}}>
+        <Panel>
+          <SH sub="Loaded source files, runtime mode, and precedence decisions">Source Provenance</SH>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:10,marginBottom:12}}>
+            <StatCard label="Runtime Mode" value={analysisOnly?"Analysis-only":"Full forensic"} sub={analysisOnly?"Insights datasets only":"Row-level voters loaded"} color={analysisOnly?C.yellow:C.green}/>
+            <StatCard label="Raw Sources" value={Object.keys(loadedFileMeta||{}).length} sub="Voter-level workbooks" color={C.blue}/>
+            <StatCard label="Insight Sources" value={insightSources.length} sub="Compact aggregated workbooks" color={C.Muslim}/>
+            <StatCard label="Coverage Conflicts" value={provenanceConflicts.length} sub="Overlapping raw/insight or multi-insight parts" color={provenanceConflicts.length?C.adj:C.green}/>
+          </div>
+          <div style={{overflowX:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,minWidth:860}}>
+              <thead><tr style={{borderBottom:`1px solid ${C.border}`}}>
+                {["Source File","Type","Imported","AC Coverage","Parts","Rows","Duplicate Of"].map(h=>(
+                  <th key={h} style={{padding:"7px 8px",textAlign:h==="Source File"||h==="Type"||h==="AC Coverage"?"left":"right",fontSize:10,color:C.dim,textTransform:"uppercase"}}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {provenanceRows.map(r=>(
+                  <tr key={`${r.fileName}_${r.importedAt}`} style={{borderBottom:`1px solid ${C.border}22`}}>
+                    <td style={{padding:"7px 8px",color:C.text,fontFamily:MONO}}>{r.fileName}</td>
+                    <td style={{padding:"7px 8px",color:C.muted}}>{r.type}</td>
+                    <td style={{padding:"7px 8px",textAlign:"right",color:C.dim,fontFamily:MONO}}>{r.importedAt?new Date(r.importedAt).toLocaleString():""}</td>
+                    <td style={{padding:"7px 8px",color:C.muted}}>{r.acCoverage||"—"}</td>
+                    <td style={{padding:"7px 8px",textAlign:"right",color:C.text}}>{r.partCount}</td>
+                    <td style={{padding:"7px 8px",textAlign:"right",color:C.text}}>{r.rowCount}</td>
+                    <td style={{padding:"7px 8px",textAlign:"right",color:C.orange}}>{r.duplicateOf||"—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+        <Panel>
+          <SH sub="Raw coverage takes precedence over insight coverage for the same AC+Part">Coverage Conflicts</SH>
+          <div style={{overflowX:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,minWidth:900}}>
+              <thead><tr style={{borderBottom:`1px solid ${C.border}`}}>
+                {["AC/Part Key","Raw Files","Insight Files","Resolution"].map(h=>(
+                  <th key={h} style={{padding:"7px 8px",textAlign:h==="AC/Part Key"?"left":"right",fontSize:10,color:C.dim,textTransform:"uppercase"}}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {provenanceConflicts.length===0?(
+                  <tr><td colSpan={4} style={{padding:"18px 8px",textAlign:"center",color:C.dim}}>No current source conflicts detected.</td></tr>
+                ):provenanceConflicts.map(r=>(
+                  <tr key={r.key} style={{borderBottom:`1px solid ${C.border}22`}}>
+                    <td style={{padding:"7px 8px",color:C.text,fontFamily:MONO}}>{r.key}</td>
+                    <td style={{padding:"7px 8px",textAlign:"right",color:C.blue}}>{r.rawFiles.join(", ")||"—"}</td>
+                    <td style={{padding:"7px 8px",textAlign:"right",color:C.Muslim}}>{r.insightFiles.join(", ")||"—"}</td>
+                    <td style={{padding:"7px 8px",textAlign:"right"}}><Tag c={r.status} color={r.status==="Raw preferred"?C.adj:C.yellow}/></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+      </div>
+    );
+  };
+
+  const renderAnalysisOnlyOverview=()=>{
+    const d=analysisOnlyData;
+    return(
+      <div style={{display:"flex",flexDirection:"column",gap:18}}>
+        <div style={{padding:"10px 12px",border:`1px solid ${C.yellow}44`,background:C.yellow+"11",borderRadius:10,fontSize:12,color:C.muted,lineHeight:1.6}}>
+          Analysis-only mode is active. This session was loaded from aggregated insights workbooks, so voter-level editing, review queue, duplicate-row inspection, and token learning are disabled.
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:10}}>
+          <StatCard label="Total Voters" value={d.totals.total.toLocaleString()} sub={`${d.partRows.length} parts`} color={C.blue}/>
+          <StatCard label="Under Adjudication" value={d.totals.adj.toLocaleString()} sub={pct(d.totals.adj,d.totals.total)} color={C.adj}/>
+          <StatCard label="Deleted" value={d.totals.del.toLocaleString()} sub={pct(d.totals.del,d.totals.total)} color={C.del}/>
+          <StatCard label="Muslim Adj Rate" value={pct(Math.round(d.mAR*d.totals.muslim),d.totals.muslim)} sub={`${Math.round(d.mAR*d.totals.muslim)}/${d.totals.muslim}`} color={C.Muslim}/>
+          <StatCard label="Hindu Adj Rate" value={pct(Math.round(d.hAR*d.totals.hindu),d.totals.hindu)} sub={`${Math.round(d.hAR*d.totals.hindu)}/${d.totals.hindu}`} color={C.Hindu}/>
+          <StatCard label="Bias Ratio" value={ratioStr(d.mAR,d.hAR)} sub="Muslim÷Hindu adj rate" color={(d.hAR>0&&d.mAR/d.hAR>2)?C.adj:C.green}/>
+        </div>
+        <Panel>
+          <SH sub="Part-level insight rows imported from compact workbooks">Part Insights</SH>
+          <div style={{overflowX:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,minWidth:920}}>
+              <thead><tr style={{borderBottom:`1px solid ${C.border}`}}>
+                {["AC","Part","Total","Adj","Del","Adj%","Muslim","Hindu","Muslim Adj","Hindu Adj","Source"].map(h=>(
+                  <th key={h} style={{padding:"7px 8px",textAlign:h==="AC"||h==="Part"||h==="Source"?"left":"right",fontSize:10,color:C.dim,textTransform:"uppercase"}}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {d.partRows.map(r=>(
+                  <tr key={`${r.ac_no}|${r.part_no}`} style={{borderBottom:`1px solid ${C.border}22`}}>
+                    <td style={{padding:"7px 8px",color:C.text}}>{r.ac_no} - {r.ac_name}</td>
+                    <td style={{padding:"7px 8px",color:C.text,fontWeight:700}}>P{r.part_no}</td>
+                    <td style={{padding:"7px 8px",textAlign:"right",color:C.muted}}>{r.total}</td>
+                    <td style={{padding:"7px 8px",textAlign:"right",color:C.adj}}>{r.adj}</td>
+                    <td style={{padding:"7px 8px",textAlign:"right",color:C.del}}>{r.del}</td>
+                    <td style={{padding:"7px 8px",textAlign:"right",color:C.orange}}>{pct(r.adj,r.total)}</td>
+                    <td style={{padding:"7px 8px",textAlign:"right",color:C.Muslim}}>{r.muslim}</td>
+                    <td style={{padding:"7px 8px",textAlign:"right",color:C.Hindu}}>{r.hindu}</td>
+                    <td style={{padding:"7px 8px",textAlign:"right",color:C.Muslim}}>{r.muslimAdj}</td>
+                    <td style={{padding:"7px 8px",textAlign:"right",color:C.Hindu}}>{r.hinduAdj}</td>
+                    <td style={{padding:"7px 8px",color:C.dim,fontFamily:MONO}}>{r.__source}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+      </div>
+    );
+  };
+
+  const renderAnalysisOnlyReligion=()=>{
+    const rows=analysisOnlyData.religionRows;
+    return(
+      <Panel>
+        <SH sub="Derived from part-level insights. Uncertain/Unknown status split is unavailable in compact mode.">Religion Summary (Insights)</SH>
+        <div style={{overflowX:"auto"}}>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,minWidth:760}}>
+            <thead><tr style={{borderBottom:`1px solid ${C.border}`}}>
+              {["Religion","Total","Active","Under Adj","Deleted","Adj%","Del%"].map(h=>(
+                <th key={h} style={{padding:"7px 8px",textAlign:h==="Religion"?"left":"right",fontSize:10,color:C.dim,textTransform:"uppercase"}}>{h}</th>
+              ))}
+            </tr></thead>
+            <tbody>
+              {rows.map(r=>(
+                <tr key={r.religion} style={{borderBottom:`1px solid ${C.border}22`}}>
+                  <td style={{padding:"7px 8px",color:C[r.religion]||C.text,fontWeight:700}}>{r.religion}</td>
+                  <td style={{padding:"7px 8px",textAlign:"right",color:C.muted}}>{r.total}</td>
+                  <td style={{padding:"7px 8px",textAlign:"right",color:C.blue}}>{r.active??"—"}</td>
+                  <td style={{padding:"7px 8px",textAlign:"right",color:C.adj}}>{r.adj??"—"}</td>
+                  <td style={{padding:"7px 8px",textAlign:"right",color:C.del}}>{r.del??"—"}</td>
+                  <td style={{padding:"7px 8px",textAlign:"right",color:C.orange}}>{r.adjRate??"—"}</td>
+                  <td style={{padding:"7px 8px",textAlign:"right",color:C.orange}}>{r.delRate??"—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
+    );
+  };
+
+  const renderAnalysisOnlyAge=()=>{
+    const rows=analysisOnlyData.ageRows;
+    return(
+      <Panel>
+        <SH sub="Age totals imported from compact part insights. Age x status is not available without voter-level data.">Age Summary (Insights)</SH>
+        <div style={{overflowX:"auto"}}>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,minWidth:520}}>
+            <thead><tr style={{borderBottom:`1px solid ${C.border}`}}>
+              {["Age Group","Total","Share"].map(h=>(
+                <th key={h} style={{padding:"7px 8px",textAlign:h==="Age Group"?"left":"right",fontSize:10,color:C.dim,textTransform:"uppercase"}}>{h}</th>
+              ))}
+            </tr></thead>
+            <tbody>
+              {rows.map(r=>(
+                <tr key={r.age} style={{borderBottom:`1px solid ${C.border}22`}}>
+                  <td style={{padding:"7px 8px",color:C.text,fontWeight:r.age.includes("★")?700:500}}>{r.age}</td>
+                  <td style={{padding:"7px 8px",textAlign:"right",color:C.muted}}>{r.total}</td>
+                  <td style={{padding:"7px 8px",textAlign:"right",color:C.orange}}>{pct(r.total,analysisOnlyData.totals.total)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
+    );
+  };
 
   // ── Render ──────────────────────────────────────────────────────────────────
-  if(!voters.length&&!loading) return <UploadScreen onFiles={loadFiles} loading={loading}/>;
+  if(!voters.length&&!loading&&!analysisOnly) return <UploadScreen onFiles={loadFiles} loading={loading} theme={theme} setTheme={setTheme}/>;
 
-  const TABS=[
+  const headerAcNo=analysisOnly ? (analysisOnlyData.partRows[0]?.ac_no||"–") : (voters[0]?.ac_no||"–");
+  const headerAcName=analysisOnly ? (analysisOnlyData.partRows[0]?.ac_name||"–") : (voters[0]?.ac_name||"–");
+  const TABS=analysisOnly?[
+    {id:"overview",label:"Overview"},
+    {id:"religion",label:"Religion"},
+    {id:"age",label:"Age Cohorts"},
+    {id:"sources",label:`Sources (${provenanceRows.length})`,badge:provenanceConflicts.length},
+    {id:"methodology",label:"Methodology"},
+  ]:[
     {id:"overview",label:"Overview"},
     {id:"religion",label:"Religion"},
     {id:"age",label:"Age Cohorts"},
@@ -4291,6 +5936,7 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
     {id:"voters",label:`Voters (${filtered.length.toLocaleString()})`},
     {id:"review",label:needsReview.length>0?`Review (${needsReview.length})`:"Review",badge:needsReview.length},
     {id:"tokens",label:`Tokens${Object.keys(tokenOverrides).length?` (${Object.keys(tokenOverrides).length}✎)`:""}` },
+    {id:"sources",label:`Sources (${provenanceRows.length})`,badge:provenanceConflicts.length},
     {id:"methodology",label:"Methodology"},
   ];
 
@@ -4306,7 +5952,7 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
           </div>}
           <div style={{fontSize:mobile?12:14,fontWeight:800,color:C.text,letterSpacing:-0.5,
             whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
-            AC {voters[0]?.ac_no||"–"} · {voters[0]?.ac_name||"–"} · WB 2026
+            AC {headerAcNo} · {headerAcName} · WB 2026
           </div>
         </div>
         <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}>
@@ -4327,7 +5973,7 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
           )}
           {!mobile&&<span style={{background:C.panel,borderRadius:16,padding:"2px 10px",
             fontSize:11,color:C.dim,fontFamily:MONO}}>
-            {voters.length.toLocaleString()} · {parts.length} parts
+            {(analysisOnly?analysisOnlyData.totals.total:voters.length).toLocaleString()} · {(analysisOnly?analysisOnlyData.partRows.length:parts.length)} parts
           </span>}
           {!mobile&&duplicateGroups.length>0&&(
             <span style={{background:C.orange+"22",border:`1px solid ${C.orange}44`,borderRadius:16,padding:"2px 8px",
@@ -4335,16 +5981,21 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
               dup {duplicateGroups.length}
             </span>
           )}
-          <button onClick={exportReportPack} disabled={reportBusy}
+          <button onClick={exportReportPack} disabled={reportBusy||analysisOnly}
             style={{padding:"4px 10px",background:C.green+"22",border:`1px solid ${C.green}44`,
               borderRadius:5,color:C.green,fontSize:11,cursor:reportBusy?"default":"pointer",fontWeight:600,
-              opacity:reportBusy?0.6:1}}>
+              opacity:(reportBusy||analysisOnly)?0.6:1}}>
             {reportBusy?"Exporting…":"Export Report Pack"}
           </button>
           <button onClick={exportSessionPack}
             style={{padding:"4px 10px",background:C.panel,border:`1px solid ${C.border}`,
               borderRadius:5,color:C.muted,fontSize:11,cursor:"pointer",fontWeight:600}}>
             Export Session
+          </button>
+          <button onClick={()=>exportInsightsWorkbook(voters.map(v=>({...v,override:overrides[v._uid]||null})))} disabled={analysisOnly}
+            style={{padding:"4px 10px",background:C.panel,border:`1px solid ${C.border}`,
+              borderRadius:5,color:C.muted,fontSize:11,cursor:"pointer",fontWeight:600,opacity:analysisOnly?0.6:1}}>
+            Export Insights
           </button>
           <button onClick={()=>sessionFileRef.current?.click()}
             style={{padding:"4px 10px",background:C.panel,border:`1px solid ${C.border}`,
@@ -4357,9 +6008,9 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
             + Load
           </button>
           <button onClick={()=>{if(window.confirm("Clear all data and saved state?"))
-            {setVoters([]);setOverrides({});setTokenOverrides({});setLoadedFiles({});setLoadedFileMeta({});
+            {setVoters([]);setOverrides({});setTokenOverrides({});setLoadedFiles({});setLoadedFileMeta({});setLoadedInsightsMeta({});
              setTokenLearnCount(0);
-             try{["eim_voters","eim_overrides","eim_tokenOverrides","eim_loadedFiles","eim_loadedFileMeta"]
+             try{["eim_voters","eim_overrides","eim_tokenOverrides","eim_tokenLearnCount","eim_loadedFiles","eim_loadedFileMeta","eim_loadedInsightsMeta"]
                .forEach(k=>localStorage.removeItem(k));}catch{}
             }}}
             style={{padding:"4px 10px",background:C.panel,border:`1px solid ${C.border}`,
@@ -4479,6 +6130,58 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
                 color:C.adj,fontSize:13,cursor:"pointer",fontWeight:700}}>
                 Replace Existing
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {ingestPlanModal&&(
+        <div style={{position:"fixed",inset:0,background:"#00000088",zIndex:78,display:"flex",alignItems:"center",justifyContent:"center",padding:12}}>
+          <div style={{width:"min(980px,96vw)",maxHeight:"90vh",overflow:"auto",background:C.panel,border:`1px solid ${C.border}`,borderRadius:12,padding:16}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+              <div>
+                <div style={{fontSize:15,fontWeight:800,color:C.text}}>Upload Planner</div>
+                <div style={{fontSize:12,color:C.dim,marginTop:2}}>Detected file types, overlap rules, and planned ingest actions before loading.</div>
+              </div>
+              <button onClick={()=>setIngestPlanModal(null)} style={{padding:"4px 8px",background:"transparent",border:`1px solid ${C.border}`,borderRadius:6,color:C.dim,cursor:"pointer"}}>Close</button>
+            </div>
+            {ingestPlanModal.overlaps?.length>0&&(
+              <div style={{marginBottom:10,padding:"10px 12px",border:`1px solid ${C.yellow}44`,background:C.yellow+"11",borderRadius:8,fontSize:12,color:C.muted}}>
+                Overlap detected inside this batch for {ingestPlanModal.overlaps.length} AC/Part coverage key(s). Raw voter workbooks are preferred over insights for the same coverage.
+              </div>
+            )}
+            <div style={{overflowX:"auto"}}>
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,minWidth:980}}>
+                <thead><tr style={{borderBottom:`1px solid ${C.border}`}}>
+                  {["File","Detected Type","AC Coverage","Parts","Action","Raw Overlap","Insight Overlap","Internal Conflict"].map(h=>(
+                    <th key={h} style={{padding:"7px 8px",textAlign:h==="File"||h==="Detected Type"||h==="AC Coverage"?"left":"right",fontSize:10,color:C.dim,textTransform:"uppercase"}}>{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>
+                  {ingestPlanModal.plans.map(p=>(
+                    <tr key={p.file.name} style={{borderBottom:`1px solid ${C.border}22`}}>
+                      <td style={{padding:"7px 8px",color:C.text,fontFamily:MONO}}>{p.file.name}</td>
+                      <td style={{padding:"7px 8px",color:C.muted}}>{p.label}</td>
+                      <td style={{padding:"7px 8px",color:C.muted}}>{(p.coverage?.acPairs||[]).map(v=>v.replace("|"," - ")).join("; ")||"—"}</td>
+                      <td style={{padding:"7px 8px",textAlign:"right",color:C.text}}>{(p.coverage?.parts||[]).length}</td>
+                      <td style={{padding:"7px 8px",textAlign:"right"}}>
+                        <Tag c={p.plannedAction==="load-voters"?"Load voters":p.plannedAction==="catalog-insights"?"Catalog insights":p.plannedAction==="use-import-session"?"Use Import Session":"Skip"} color={p.plannedAction==="skip"?C.dim:(p.plannedAction==="catalog-insights"?C.Muslim:C.blue)}/>
+                      </td>
+                      <td style={{padding:"7px 8px",textAlign:"right",color:(p.overlapWithRaw||[]).length?C.adj:C.dim}}>{(p.overlapWithRaw||[]).length||"—"}</td>
+                      <td style={{padding:"7px 8px",textAlign:"right",color:(p.overlapWithInsights||[]).length?C.yellow:C.dim}}>{(p.overlapWithInsights||[]).length||"—"}</td>
+                      <td style={{padding:"7px 8px",textAlign:"right",color:(p.internalConflicts||[]).length?C.adj:C.dim}}>{(p.internalConflicts||[]).length||"—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div style={{marginTop:12,display:"flex",justifyContent:"flex-end",gap:8}}>
+              <button onClick={()=>setIngestPlanModal(null)} style={{padding:"6px 10px",background:"transparent",border:`1px solid ${C.border}`,borderRadius:6,color:C.dim,cursor:"pointer"}}>Cancel</button>
+              <button onClick={async()=>{
+                const m=ingestPlanModal;
+                setIngestPlanModal(null);
+                await executePlannedUpload(m.plans);
+              }} style={{padding:"6px 12px",background:C.blue+"22",border:`1px solid ${C.blue}44`,borderRadius:6,color:C.blue,cursor:"pointer",fontWeight:700}}>Continue</button>
             </div>
           </div>
         </div>
@@ -4890,6 +6593,121 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
           </div>
         </div>
       )}
+
+      {tableExportModal&&(
+        <div style={{position:"fixed",inset:0,background:"#00000066",zIndex:76,display:"flex",alignItems:"center",justifyContent:"center",padding:12}}>
+          <div style={{width:"min(620px,96vw)",background:C.panel,border:`1px solid ${C.border}`,borderRadius:10,padding:14,maxHeight:"92vh",overflow:"auto"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+              <div>
+                <div style={{fontSize:14,fontWeight:700,color:C.text}}>Export Table</div>
+                <div style={{fontSize:11,color:C.dim,marginTop:2}}>
+                  Smart sizing uses the table&apos;s full scroll width and height so dense tables stay readable.
+                </div>
+              </div>
+              <button onClick={()=>setTableExportModal(null)} style={{padding:"4px 8px",background:"transparent",border:`1px solid ${C.border}`,borderRadius:6,color:C.dim,cursor:"pointer"}}>Close</button>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+              <div>
+                <div style={{fontSize:11,color:C.dim,marginBottom:4}}>Filename</div>
+                <input value={tableExportModal.filename||""}
+                  onChange={e=>setTableExportModal(m=>({...m,filename:e.target.value}))}
+                  style={{width:"100%",padding:"6px 8px",border:`1px solid ${C.border}`,borderRadius:6,background:C.bg,color:C.text,fontSize:12,boxSizing:"border-box"}}/>
+              </div>
+              <div>
+                <div style={{fontSize:11,color:C.dim,marginBottom:4}}>Format</div>
+                <select value={tableExportModal.format||"png"}
+                  onChange={e=>setTableExportModal(m=>({...m,format:e.target.value}))}
+                  style={{width:"100%",padding:"6px 8px",border:`1px solid ${C.border}`,borderRadius:6,background:C.bg,color:C.text,fontSize:12}}>
+                  <option value="png">PNG</option>
+                  <option value="svg">SVG</option>
+                  <option value="csv">CSV</option>
+                  <option value="xlsx">XLSX</option>
+                </select>
+              </div>
+              <div style={{gridColumn:"1 / -1"}}>
+                <div style={{fontSize:11,color:C.dim,marginBottom:4}}>Title</div>
+                <input value={tableExportModal.title||""}
+                  onChange={e=>setTableExportModal(m=>({...m,title:e.target.value}))}
+                  style={{width:"100%",padding:"6px 8px",border:`1px solid ${C.border}`,borderRadius:6,background:C.bg,color:C.text,fontSize:12,boxSizing:"border-box"}}/>
+              </div>
+              <div style={{gridColumn:"1 / -1"}}>
+                <div style={{fontSize:11,color:C.dim,marginBottom:4}}>Subtitle</div>
+                <input value={tableExportModal.subtitle||""}
+                  onChange={e=>setTableExportModal(m=>({...m,subtitle:e.target.value}))}
+                  style={{width:"100%",padding:"6px 8px",border:`1px solid ${C.border}`,borderRadius:6,background:C.bg,color:C.text,fontSize:12,boxSizing:"border-box"}}/>
+              </div>
+              <div style={{gridColumn:"1 / -1"}}>
+                <div style={{fontSize:11,color:C.dim,marginBottom:4}}>Footnote</div>
+                <input value={tableExportModal.note||""}
+                  onChange={e=>setTableExportModal(m=>({...m,note:e.target.value}))}
+                  style={{width:"100%",padding:"6px 8px",border:`1px solid ${C.border}`,borderRadius:6,background:C.bg,color:C.text,fontSize:12,boxSizing:"border-box"}}/>
+              </div>
+              {(tableExportModal.format==="csv"||tableExportModal.format==="xlsx")&&(
+                <>
+                  <div>
+                    <div style={{fontSize:11,color:C.dim,marginBottom:4}}>Sheet name</div>
+                    <input value={tableExportModal.sheetName||"Data"}
+                      onChange={e=>setTableExportModal(m=>({...m,sheetName:e.target.value}))}
+                      style={{width:"100%",padding:"6px 8px",border:`1px solid ${C.border}`,borderRadius:6,background:C.bg,color:C.text,fontSize:12,boxSizing:"border-box"}}/>
+                  </div>
+                  <div style={{display:"flex",alignItems:"end",fontSize:11,color:C.dim}}>
+                    {Array.isArray(tableExportModal.rows)?`${tableExportModal.rows.length.toLocaleString()} row(s) will be exported.`:"No structured rows attached."}
+                  </div>
+                </>
+              )}
+              {(tableExportModal.format==="png"||tableExportModal.format==="svg")&&(
+                <>
+                  <div>
+                    <div style={{fontSize:11,color:C.dim,marginBottom:4}}>Width</div>
+                    <input type="number" min="760" max="12000" value={tableExportModal.width||1200}
+                      onChange={e=>setTableExportModal(m=>({...m,width:+e.target.value||1200}))}
+                      style={{width:"100%",padding:"6px 8px",border:`1px solid ${C.border}`,borderRadius:6,background:C.bg,color:C.text,fontSize:12,boxSizing:"border-box"}}/>
+                  </div>
+                  <div>
+                    <div style={{fontSize:11,color:C.dim,marginBottom:4}}>Height</div>
+                    <input type="number" min="260" max="12000" value={tableExportModal.height||800}
+                      onChange={e=>setTableExportModal(m=>({...m,height:+e.target.value||800}))}
+                      style={{width:"100%",padding:"6px 8px",border:`1px solid ${C.border}`,borderRadius:6,background:C.bg,color:C.text,fontSize:12,boxSizing:"border-box"}}/>
+                  </div>
+                  <div>
+                    <div style={{fontSize:11,color:C.dim,marginBottom:4}}>Scale</div>
+                    <input type="number" step="0.5" min="1" max="4" value={tableExportModal.scale||2}
+                      onChange={e=>setTableExportModal(m=>({...m,scale:+e.target.value||2}))}
+                      style={{width:"100%",padding:"6px 8px",border:`1px solid ${C.border}`,borderRadius:6,background:C.bg,color:C.text,fontSize:12,boxSizing:"border-box"}}/>
+                  </div>
+                  <div>
+                    <div style={{fontSize:11,color:C.dim,marginBottom:4}}>Border style</div>
+                    <select value={tableExportModal.borderMode||"auto"}
+                      onChange={e=>setTableExportModal(m=>({...m,borderMode:e.target.value}))}
+                      style={{width:"100%",padding:"6px 8px",border:`1px solid ${C.border}`,borderRadius:6,background:C.bg,color:C.text,fontSize:12}}>
+                      <option value="auto">Auto</option>
+                      <option value="bordered">Bordered</option>
+                      <option value="clean">Minimal lines</option>
+                    </select>
+                  </div>
+                  <div>
+                    <div style={{fontSize:11,color:C.dim,marginBottom:4}}>Background</div>
+                    <input type="color" value={normalizeHexColor(tableExportModal.background,normalizeHexColor(C.bg,"#ffffff"))}
+                      onChange={e=>setTableExportModal(m=>({...m,background:normalizeHexColor(e.target.value,normalizeHexColor(C.bg,"#ffffff"))}))}
+                      style={{width:"100%",height:34,padding:0,border:`1px solid ${C.border}`,borderRadius:6,background:C.bg}}/>
+                  </div>
+                  <label style={{gridColumn:"1 / -1",fontSize:12,color:C.text,display:"flex",alignItems:"center",gap:6}}>
+                    <input type="checkbox" checked={!!tableExportModal.includeTimestamp}
+                      onChange={e=>setTableExportModal(m=>({...m,includeTimestamp:e.target.checked}))}/>
+                    Include export timestamp in table header
+                  </label>
+                </>
+              )}
+            </div>
+            <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:12}}>
+              <button onClick={()=>setTableExportModal(null)}
+                style={{padding:"6px 10px",background:"transparent",border:`1px solid ${C.border}`,borderRadius:6,color:C.dim,cursor:"pointer"}}>Cancel</button>
+              <button onClick={runTableExport}
+                style={{padding:"6px 12px",background:C.blue+"22",border:`1px solid ${C.blue}44`,borderRadius:6,color:C.blue,cursor:"pointer",fontWeight:700}}>Export</button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Tabs */}
       <div style={{borderBottom:`1px solid ${C.border}`,display:"flex",gap:0,
         background:C.bg,overflowX:"auto",WebkitOverflowScrolling:"touch",
@@ -4912,31 +6730,34 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
         ))}
       </div>
 
-      <FilterBar
-        gSearch={gSearch} setGSearch={setGSearch}
-        gPart={gPart} setGPart={setGPart}
-        gStatus={gStatus} setGStatus={setGStatus}
-        gRel={gRel} setGRel={setGRel}
-        gAge={gAge} setGAge={setGAge}
-        gGender={gGender} setGGender={setGGender}
-        parts={parts}
-        filteredLen={filtered.length} totalLen={voters.length}
-        setVPage={setVPage} setBoothPage={setBoothPage}
-      />
+      {!analysisOnly&&(
+        <FilterBar
+          gSearch={gSearch} setGSearch={setGSearch}
+          gPart={gPart} setGPart={setGPart}
+          gStatus={gStatus} setGStatus={setGStatus}
+          gRel={gRel} setGRel={setGRel}
+          gAge={gAge} setGAge={setGAge}
+          gGender={gGender} setGGender={setGGender}
+          parts={parts}
+          filteredLen={filtered.length} totalLen={voters.length}
+          setVPage={setVPage} setBoothPage={setBoothPage}
+        />
+      )}
 
       {/* Content */}
       <div id="tabContentRoot" style={{padding:mobile?"10px 8px":tablet?"14px 16px":"20px 24px"}}>
         {loading&&<div style={{textAlign:"center",padding:40,color:C.blue,fontFamily:MONO}}>Processing files…</div>}
-        {tab==="overview"&&renderOverview()}
-        {tab==="religion"&&renderReligion()}
-        {tab==="age"&&renderAge()}
-        {tab==="custom"&&renderCustomAnalytics()}
-        {tab==="trends"&&renderTrends()}
-        {tab==="booths"&&renderBooths()}
-        {tab==="duplicates"&&renderDuplicates()}
-        {tab==="voters"&&renderVoters()}
-        {tab==="review"&&renderReview()}
-        {tab==="tokens"&&renderTokens()}
+        {tab==="overview"&&(analysisOnly?renderAnalysisOnlyOverview():renderOverview())}
+        {tab==="religion"&&(analysisOnly?renderAnalysisOnlyReligion():renderReligion())}
+        {tab==="age"&&(analysisOnly?renderAnalysisOnlyAge():renderAge())}
+        {tab==="custom"&&!analysisOnly&&renderCustomAnalytics()}
+        {tab==="trends"&&!analysisOnly&&renderTrends()}
+        {tab==="booths"&&!analysisOnly&&renderBooths()}
+        {tab==="duplicates"&&!analysisOnly&&renderDuplicates()}
+        {tab==="voters"&&!analysisOnly&&renderVoters()}
+        {tab==="review"&&!analysisOnly&&renderReview()}
+        {tab==="tokens"&&!analysisOnly&&renderTokens()}
+        {tab==="sources"&&renderSources()}
         {tab==="methodology"&&renderMethodology()}
       </div>
     </div>
