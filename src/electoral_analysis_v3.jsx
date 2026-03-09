@@ -1023,6 +1023,7 @@ function AppInner(){
   const [loading,setLoading]=useState(false);
   const [tab,setTab]=useState("overview");
   const [allowHeavyCharts,setAllowHeavyCharts]=useState(false);
+  const swipeRef=useRef({x:0,y:0,active:false});
 
   // File warnings (column errors, missing sheets)
   const [fileWarnings,setFileWarnings]=useState([]);
@@ -6217,6 +6218,32 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
     {id:"methodology",label:"Methodology"},
   ];
 
+  const tabIds=TABS.map(t=>t.id);
+  const swipeBlockedTarget=(target)=>{
+    if(!target?.closest) return false;
+    return !!target.closest("button,input,textarea,select,option,a,label,[role='button'],[data-no-swipe],.recharts-legend-wrapper");
+  };
+  const handleSwipeStart=(e)=>{
+    if(!mobile) return;
+    const t=e.touches?.[0];
+    if(!t) return;
+    if(swipeBlockedTarget(e.target)) return;
+    swipeRef.current={ x:t.clientX, y:t.clientY, active:true };
+  };
+  const handleSwipeEnd=(e)=>{
+    if(!mobile || !swipeRef.current.active) return;
+    swipeRef.current.active=false;
+    const t=e.changedTouches?.[0];
+    if(!t) return;
+    const dx=t.clientX-swipeRef.current.x;
+    const dy=t.clientY-swipeRef.current.y;
+    if(Math.abs(dx)<60 || Math.abs(dy)>42 || Math.abs(dx)<=Math.abs(dy)) return;
+    const idx=tabIds.indexOf(tab);
+    if(idx<0) return;
+    const nextIdx=dx<0?Math.min(tabIds.length-1,idx+1):Math.max(0,idx-1);
+    if(nextIdx!==idx) setTab(tabIds[nextIdx]);
+  };
+
   return(
     <div style={{minHeight:"100vh",background:C.bg,color:C.text,fontFamily:FONT}}>
       {/* Header */}
@@ -7095,7 +7122,10 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
       )}
 
       {/* Content */}
-      <div id="tabContentRoot" style={{padding:mobile?"10px 8px":tablet?"14px 16px":"20px 24px"}}>
+      <div id="tabContentRoot"
+        onTouchStart={handleSwipeStart}
+        onTouchEnd={handleSwipeEnd}
+        style={{padding:mobile?"10px 8px":tablet?"14px 16px":"20px 24px"}}>
         {loading&&<div style={{textAlign:"center",padding:40,color:C.blue,fontFamily:MONO}}>Processing files…</div>}
         {tab==="overview"&&(analysisOnly?renderAnalysisOnlyOverview():renderOverview())}
         {tab==="religion"&&(analysisOnly?renderAnalysisOnlyReligion():renderReligion())}
