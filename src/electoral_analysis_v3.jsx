@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useMemo, useEffect } from "react";
+import { useState, useCallback, useRef, useMemo, useEffect, Component } from "react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, PieChart, Pie, Cell, LabelList,
@@ -329,6 +329,39 @@ function exportRowsCsv(rows, filename="chart_data"){
   a.href=URL.createObjectURL(blob);
   a.click();
   URL.revokeObjectURL(a.href);
+}
+
+class AppErrorBoundary extends Component{
+  constructor(props){
+    super(props);
+    this.state={error:null};
+  }
+  static getDerivedStateFromError(error){
+    return {error};
+  }
+  componentDidCatch(error,info){
+    try{
+      console.error("App render failed",error,info);
+    }catch{}
+  }
+  render(){
+    if(this.state.error){
+      return(
+        <div style={{minHeight:"100vh",background:"#0a0f1e",color:"#e2e8f0",padding:"24px",fontFamily:"Inter, Segoe UI, sans-serif"}}>
+          <div style={{maxWidth:760,margin:"0 auto",padding:"20px",border:"1px solid #1f2d45",borderRadius:12,background:"#111827"}}>
+            <div style={{fontSize:24,fontWeight:800,marginBottom:8}}>App Render Failed</div>
+            <div style={{fontSize:13,color:"#94a3b8",lineHeight:1.7,marginBottom:12}}>
+              A runtime error occurred after load. This screen is shown instead of a blank page so the failure can be diagnosed.
+            </div>
+            <pre style={{whiteSpace:"pre-wrap",wordBreak:"break-word",fontSize:12,color:"#fca5a5",background:"#0a0f1e",padding:12,borderRadius:8,border:"1px solid #1f2d45"}}>
+              {String(this.state.error?.stack||this.state.error?.message||this.state.error||"Unknown render error")}
+            </pre>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 function exportTableImage(containerId, filename="table_export", meta={}){
   return exportTableGraphic({
@@ -974,7 +1007,7 @@ function UploadScreen({onFiles,loading,theme,setTheme,onImportSession}){
 }
 
 // ══ MAIN APP ═════════════════════════════════════════════════════════════════
-export default function App(){
+function AppInner(){
   const ww=useWindowWidth();
   const mobile=ww<640;
   const tablet=ww<1024;
@@ -1113,7 +1146,7 @@ export default function App(){
   const [loadedInsightsMeta,setLoadedInsightsMeta]=useState(()=>{
     try{ const v=localStorage.getItem("eim_loadedInsightsMeta"); return v?JSON.parse(v):{}; }catch{return {};}
   });
-  const [replaceModal,setReplaceModal]=useState(null); // {files:[File,...]} pending replace prompt
+  const [replaceModal,setReplaceModal]=useState(null); // {plans:[{file,buffer,rows,...}], ...} pending replace prompt
   const [ingestPlanModal,setIngestPlanModal]=useState(null);
   const [resolvedDuplicateKeys,setResolvedDuplicateKeys]=useState({});
   const [resolvedFileHashes,setResolvedFileHashes]=useState({});
@@ -1209,14 +1242,20 @@ export default function App(){
   useEffect(()=>{
     try{ localStorage.setItem("eim_loadedInsightsMeta",JSON.stringify(loadedInsightsMeta)); }catch{}
   },[loadedInsightsMeta]);
-  // Voters: throttle saves — only when count changes or status changes (avoid huge writes on filter)
+  // Voters: defer persistence off the immediate render path and skip obviously oversized payloads.
   const votersSaveKey=voters.length+"_"+voters.filter(v=>v.status!=="Active").length;
   useEffect(()=>{
     if(!voters.length) return;
-    try{
-      const s=JSON.stringify(voters);
-      if(s.length<5*1024*1024) localStorage.setItem("eim_voters",s);
-    }catch(e){ console.warn("eim: voters too large to persist",e); }
+    const id=setTimeout(()=>{
+      try{
+        const sample=voters[0]?JSON.stringify(voters[0]).length:256;
+        const estimatedSize=Math.ceil(sample*voters.length*1.15);
+        if(estimatedSize>=5*1024*1024) return;
+        const s=JSON.stringify(voters);
+        if(s.length<5*1024*1024) localStorage.setItem("eim_voters",s);
+      }catch(e){ console.warn("eim: voters too large to persist",e); }
+    },300);
+    return ()=>clearTimeout(id);
   },[votersSaveKey]); // eslint-disable-line
 
   const fileRef=useRef();
@@ -1435,6 +1474,15 @@ export default function App(){
     parts:[...new Set(rows.map(r=>String(r.part_no||r["Part Number"]||r.Part||r["Part No"]||"").trim()).filter(Boolean))].sort((a,b)=>(+a||0)-(+b||0)),
   }),[]);
 
+  const readUploadEntries=useCallback(async(files)=>(
+    Promise.all(files.map(async(file)=>{
+      const lower=String(file.name||"").toLowerCase();
+      const entry={ file, lower };
+      if(lower.endsWith(".xlsx")) entry.buffer=await file.arrayBuffer();
+      return entry;
+    }))
+  ),[]);
+
   const detectWorkbookInfo=useCallback((wb,fileName="",XLSX)=>{
     const lower=String(fileName||"").toLowerCase();
     const localImportSheetName=(()=>{
@@ -1470,7 +1518,7 @@ export default function App(){
     }
     if(has("Export_Metadata")&&has("Filtered_Voters")){
       const rows=XLSX.utils.sheet_to_json(wb.Sheets["Filtered_Voters"],{defval:""});
-      return {kind:"filtered_export",label:"Filtered Export Workbook",coverage:parseCoverageFromRows(rows),sheetNames:sheets};
+      return {kind:"filtered_export",label:"Filtered Export Workbook",rows,importSheetName:"Filtered_Voters",coverage:parseCoverageFromRows(rows),sheetNames:sheets};
     }
     const importSheetName=localImportSheetName;
     if(importSheetName){
@@ -1479,6 +1527,7 @@ export default function App(){
         kind:importSheetName==="Voter Roll"?"raw_roll_xlsx":"voter_export_xlsx",
         label:importSheetName==="Voter Roll"?"Raw Roll Workbook":"Voter-Level Export Workbook",
         importSheetName,
+        rows,
         coverage:parseCoverageFromRows(rows),
         sheetNames:sheets,
       };
@@ -1486,11 +1535,11 @@ export default function App(){
     return {kind:"unknown_xlsx",label:"Unknown Workbook",coverage:{acPairs:[],parts:[]},sheetNames:sheets};
   },[parseCoverageFromRows]);
 
-  const planUploadBatch=useCallback(async(files)=>{
+  const planUploadBatch=useCallback(async(entries)=>{
     const XLSX=await loadXLSX();
     const plans=[];
-    for(const file of files){
-      const lower=String(file.name||"").toLowerCase();
+    for(const entry of entries){
+      const { file, lower }=entry;
       if(lower.endsWith(".eimpack")||lower.endsWith(".json")){
         plans.push({file,kind:"session_pack",label:"Session Pack",coverage:{acPairs:[],parts:[]},plannedAction:"not-loadable-from-main-upload"});
         continue;
@@ -1500,11 +1549,15 @@ export default function App(){
         continue;
       }
       try{
-        const buf=await file.arrayBuffer();
+        const buf=entry.buffer;
         const wb=XLSX.read(buf,{type:"array"});
         const info=detectWorkbookInfo(wb,file.name,XLSX);
+        const rawHash=await sha256HexArrayBuffer(buf);
         plans.push({
+          entry,
           file,
+          buffer:buf,
+          rawHash,
           ...info,
           plannedAction:(info.kind==="raw_roll_xlsx"||info.kind==="voter_export_xlsx"||info.kind==="filtered_export")?"load-voters":
             info.kind==="insights_xlsx"?"catalog-insights":
@@ -1588,12 +1641,14 @@ export default function App(){
   },[]);
 
   // ── Load files (with duplicate-file detection & replace/cancel modal) ────────
-  const doLoadFiles=useCallback(async(files, replaceNames=new Set())=>{
+  const doLoadFiles=useCallback(async(items, replaceNames=new Set())=>{
     setLoading(true);
     const REQUIRED=Object.keys(COLUMN_ALIASES);
     const newWarnings=[];
     try{
-      const XLSX=await loadXLSX();
+      const plans=(items||[]).map(item=>item?.file?item:{file:item});
+      const needsWorkbookRead=plans.some(p=>!Array.isArray(p.rows));
+      const XLSX=needsWorkbookRead?await loadXLSX():null;
       const model=await ensureClassifierModel();
       const classifyReligion=model.classifyReligion||FALLBACK_CLASSIFIER.classifyReligion;
       // If replacing, remove existing voters from those files first
@@ -1612,9 +1667,10 @@ export default function App(){
       const batchRawHashes=new Map();
       const batchSemanticHashes=new Map();
       let uploadedDupRows=0;
-      for(const file of files){
-        const buf=await file.arrayBuffer();
-        const rawHash=await sha256HexArrayBuffer(buf);
+      for(const item of plans){
+        const file=item.file;
+        const buf=item.buffer;
+        const rawHash=item.rawHash || (buf?await sha256HexArrayBuffer(buf):"");
         if(batchRawHashes.has(rawHash)){
           newWarnings.push({file:file.name,type:"warn",msg:`Skipped: exact binary duplicate of ${batchRawHashes.get(rawHash)} in same upload batch`});
           continue;
@@ -1623,19 +1679,22 @@ export default function App(){
           newWarnings.push({file:file.name,type:"warn",msg:`Skipped: exact same file content already loaded as ${existingRawHashes.get(rawHash)}`});
           continue;
         }
-        const wb=XLSX.read(buf,{type:"array"});
-        const importSheetName=findImportSheetName(wb);
-        if(!importSheetName){
-          newWarnings.push({file:file.name,type:"error",
-            msg:`Missing importable voter sheet. Expected one of: Voter Roll, Filtered_Voters, Session_Voters, All_Voters, Voters. Found sheets: ${wb.SheetNames.join(", ")}`});
-          continue;
+        let rows=Array.isArray(item.rows)?item.rows:null;
+        let importSheetName=item.importSheetName||null;
+        if(!rows){
+          const wb=XLSX.read(buf,{type:"array"});
+          importSheetName=findImportSheetName(wb);
+          if(!importSheetName){
+            newWarnings.push({file:file.name,type:"error",
+              msg:`Missing importable voter sheet. Expected one of: Voter Roll, Filtered_Voters, Session_Voters, All_Voters, Voters. Found sheets: ${wb.SheetNames.join(", ")}`});
+            continue;
+          }
+          rows=XLSX.utils.sheet_to_json(wb.Sheets[importSheetName],{defval:""});
         }
-        if(importSheetName!=="Voter Roll"){
+        if(importSheetName && importSheetName!=="Voter Roll"){
           newWarnings.push({file:file.name,type:"info",
             msg:`Importing from "${importSheetName}" sheet (exported workbook compatibility mode)`});
         }
-        const ws=wb.Sheets[importSheetName];
-        const rows=XLSX.utils.sheet_to_json(ws,{defval:""});
         if(!rows.length){
           newWarnings.push({file:file.name,type:"error",msg:"Sheet is empty"});
           continue;
@@ -1759,7 +1818,7 @@ export default function App(){
         // Remove replaced entries
         replaceNames.forEach(n=>delete next[n]);
         // Add/update new files
-        files.forEach(f=>{
+        plans.forEach(({file:f})=>{
           const parts=[...new Set(all.filter(v=>v.sourceFile===f.name).map(v=>v.part_no))];
           if(parts.length) next[f.name]=parts;
         });
@@ -1809,7 +1868,7 @@ export default function App(){
           partRows.map(r=>`${r.acNo||"?"} - ${r.acName||"?"}`)
         )].join(" ; ");
         setUploadSummary({
-          files:files.length,loaded:all.length,parts:partRows.length,
+          files:plans.length,loaded:all.length,parts:partRows.length,
           acCoverage,
           unknown:partRows.reduce((s,r)=>s+r.unknown,0),
           uncertain:partRows.reduce((s,r)=>s+r.uncertain,0),
@@ -1874,9 +1933,9 @@ export default function App(){
           :p.error||`Unsupported file type: ${p.label}`,
       }))]);
     }
-    const files=plans.filter(p=>p.plannedAction==="load-voters").map(p=>p.file);
-    if(!files.length) return;
-    const byName=files.filter(f=>f.name in loadedFiles);
+    const voterPlans=plans.filter(p=>p.plannedAction==="load-voters");
+    if(!voterPlans.length) return;
+    const byName=voterPlans.filter(p=>p.file.name in loadedFiles);
     const byContent=[];
     const seenRaw=new Map();
     const existingRawToName=new Map(
@@ -1884,31 +1943,31 @@ export default function App(){
         .map(([name,m])=>[m?.rawHash,name])
         .filter(([h])=>!!h)
     );
-    for(const f of files){
-      if(byName.some(x=>x.name===f.name)) continue;
-      const buf=await f.arrayBuffer();
-      const raw=await sha256HexArrayBuffer(buf);
+    for(const plan of voterPlans){
+      if(byName.some(x=>x.file.name===plan.file.name)) continue;
+      const raw=plan.rawHash;
       if(seenRaw.has(raw)) continue;
-      seenRaw.set(raw,f.name);
+      seenRaw.set(raw,plan.file.name);
       if(existingRawToName.has(raw)){
-        byContent.push({ file:f, existingName:existingRawToName.get(raw), rawHash:raw });
+        byContent.push({ plan, existingName:existingRawToName.get(raw), rawHash:raw });
       }
     }
     const conflictNewNames=new Set([
-      ...byName.map(f=>f.name),
-      ...byContent.map(x=>x.file.name),
+      ...byName.map(p=>p.file.name),
+      ...byContent.map(x=>x.plan.file.name),
     ]);
-    const newOnly=files.filter(f=>!conflictNewNames.has(f.name));
+    const newOnly=voterPlans.filter(p=>!conflictNewNames.has(p.file.name));
     if(byName.length>0 || byContent.length>0){
-      setReplaceModal({ conflicting:byName, contentConflicts:byContent, newOnly, all:files });
+      setReplaceModal({ conflicting:byName, contentConflicts:byContent, newOnly, all:voterPlans });
       return;
     }
-    await doLoadFiles(files);
+    await doLoadFiles(voterPlans);
   },[loadedFiles,loadedFileMeta,doLoadFiles]);
 
   // ── Public loadFiles: detect workbook types, plan mixed uploads, then load ──
   const loadFiles=useCallback(async(files)=>{
-    const plan=enrichUploadPlan(await planUploadBatch(files));
+    const entries=await readUploadEntries(files);
+    const plan=enrichUploadPlan(await planUploadBatch(entries));
     const typeSet=[...new Set(plan.plans.map(p=>p.kind))];
     const shouldShowPlanner=
       plan.overlaps.length>0 ||
@@ -1922,7 +1981,7 @@ export default function App(){
       return;
     }
     await executePlannedUpload(plan.plans);
-  },[planUploadBatch,enrichUploadPlan,executePlannedUpload]);
+  },[readUploadEntries,planUploadBatch,enrichUploadPlan,executePlannedUpload]);
 
   const openVoterEditor=useCallback((v)=>{
     setVoterEditModal({
@@ -2149,6 +2208,10 @@ export default function App(){
     }
   },[analysisOnly,tab]);
 
+  const needDuplicateData=!compactViewport || tab==="duplicates";
+  const needTrendData=!compactViewport || tab==="trends";
+  const needCustomAnalyticsData=!compactViewport || tab==="custom";
+
   // ── Global filtered set ─────────────────────────────────────────────────────
   const filtered=useMemo(()=>voters.filter(v=>{
     if(gPart!=="all"&&v.part_no!==gPart)return false;
@@ -2169,6 +2232,7 @@ export default function App(){
   const needsReview=useMemo(()=>voters.filter(v=>!overrides[v._uid]&&(v.religion==="Unknown"||v.religion==="Uncertain")),[voters,overrides]);
 
   const duplicateGroups=useMemo(()=>{
+    if(!needDuplicateData) return [];
     const map={};
     voters.forEach(v=>{
       const k=v.duplicateKey||duplicateKeyOf(v);
@@ -2193,9 +2257,10 @@ export default function App(){
         };
       })
       .sort((a,b)=>b.count-a.count);
-  },[voters,resolvedDuplicateKeys]);
+  },[voters,resolvedDuplicateKeys,needDuplicateData]);
 
   const fileDuplicateGroups=useMemo(()=>{
+    if(!needDuplicateData) return [];
     const arr=Object.values(loadedFileMeta||{});
     const map={};
     arr.forEach(m=>{
@@ -2214,9 +2279,10 @@ export default function App(){
         resolution:resolvedFileHashes[hash]?"manual":"auto-same-content",
       }))
       .sort((a,b)=>b.count-a.count);
-  },[loadedFileMeta,resolvedFileHashes]);
+  },[loadedFileMeta,resolvedFileHashes,needDuplicateData]);
 
   const partTrendRows=useMemo(()=>{
+    if(!needTrendData) return [];
     const pts=[...new Set(voters.map(v=>v.part_no))].sort((a,b)=>(+a||0)-(+b||0));
     const rows=pts.map(pt=>{
       const pv=voters.filter(v=>v.part_no===pt);
@@ -2246,9 +2312,10 @@ export default function App(){
     });
     const q=bhAdjust(rows.map(r=>r.p));
     return rows.map((r,i)=>({...r,q:q[i],fdrSig:q[i]<0.05}));
-  },[voters,overrides,effRel]);
+  },[voters,overrides,effRel,needTrendData]);
 
   const customAnalyticsRows=useMemo(()=>{
+    if(!needCustomAnalyticsData) return [];
     const groupVal=(v)=>{
       if(caGroupBy==="part_no") return v.part_no;
       if(caGroupBy==="ageGroup") return v.ageGroup;
@@ -2319,7 +2386,7 @@ export default function App(){
     }));
     rows.sort((a,b)=>(+a.group||0)-(+b.group||0));
     return rows;
-  },[filtered,caGroupBy,caCompare,caMetric,effRel,overrides]);
+  },[filtered,caGroupBy,caCompare,caMetric,effRel,overrides,needCustomAnalyticsData]);
 
   // ── Core stats (on filtered set) ───────────────────────────────────────────
   // Booth voter list (must be top-level, not inside renderBooths)
@@ -6253,16 +6320,16 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
               <span><b style={{color:C.text}}>{replaceModal.newOnly?.length||0}</b> new files</span>
             </div>
             <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:12,overflowY:"auto",maxHeight:"44vh",paddingRight:4}}>
-              {(replaceModal.conflicting||[]).map(f=>(
-                <div key={f.name} style={{display:"flex",alignItems:"center",gap:10,
+              {(replaceModal.conflicting||[]).map(p=>(
+                <div key={p.file.name} style={{display:"flex",alignItems:"center",gap:10,
                   padding:"8px 12px",background:C.bg,borderRadius:8,
                   border:`1px solid ${C.orange}44`}}>
                   <span style={{fontSize:18}}>📄</span>
                   <div style={{flex:1}}>
-                    <div style={{fontFamily:MONO,fontSize:12,color:C.text,fontWeight:700}}>{f.name}</div>
-                    {loadedFiles[f.name]&&(
+                    <div style={{fontFamily:MONO,fontSize:12,color:C.text,fontWeight:700}}>{p.file.name}</div>
+                    {loadedFiles[p.file.name]&&(
                       <div style={{fontSize:11,color:C.dim}}>
-                        Parts loaded: {loadedFiles[f.name].map(p=>`P${p}`).join(", ")||"–"}
+                        Parts loaded: {loadedFiles[p.file.name].map(part=>`P${part}`).join(", ")||"–"}
                       </div>
                     )}
                   </div>
@@ -6273,12 +6340,12 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
                 </div>
               ))}
               {(replaceModal.contentConflicts||[]).map(x=>(
-                <div key={`${x.file.name}_${x.existingName}`} style={{display:"flex",alignItems:"center",gap:10,
+                <div key={`${x.plan.file.name}_${x.existingName}`} style={{display:"flex",alignItems:"center",gap:10,
                   padding:"8px 12px",background:C.bg,borderRadius:8,border:`1px solid ${C.yellow}44`}}>
                   <span style={{fontSize:18}}>🧬</span>
                   <div style={{flex:1}}>
                     <div style={{fontFamily:MONO,fontSize:12,color:C.text,fontWeight:700}}>
-                      {x.file.name} ↔ {x.existingName}
+                      {x.plan.file.name} ↔ {x.existingName}
                     </div>
                     <div style={{fontSize:11,color:C.dim}}>
                       Same file content hash detected
@@ -6294,8 +6361,8 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
             {replaceModal.newOnly.length>0&&(
               <div style={{fontSize:12,color:C.dim,marginBottom:14}}>
                 New files (will be added regardless):{" "}
-                {replaceModal.newOnly.map(f=><span key={f.name}
-                  style={{fontFamily:MONO,color:C.text,marginRight:6}}>{f.name}</span>)}
+                {replaceModal.newOnly.map(p=><span key={p.file.name}
+                  style={{fontFamily:MONO,color:C.text,marginRight:6}}>{p.file.name}</span>)}
               </div>
             )}
             <div style={{fontSize:12,color:C.muted,marginBottom:18,
@@ -6332,7 +6399,7 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
               <button onClick={async()=>{
                 const m=replaceModal; setReplaceModal(null);
                 await doLoadFiles(m.all,new Set([
-                  ...(m.conflicting||[]).map(f=>f.name),
+                  ...(m.conflicting||[]).map(p=>p.file.name),
                   ...(m.contentConflicts||[]).map(x=>x.existingName),
                 ]));
               }} style={{padding:"7px 16px",background:C.adj+"22",
@@ -7044,5 +7111,13 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
         {tab==="methodology"&&renderMethodology()}
       </div>
     </div>
+  );
+}
+
+export default function App(){
+  return(
+    <AppErrorBoundary>
+      <AppInner />
+    </AppErrorBoundary>
   );
 }
