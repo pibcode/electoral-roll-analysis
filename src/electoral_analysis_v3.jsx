@@ -833,14 +833,14 @@ function FilterBar({gSearch,setGSearch,gPart,setGPart,gStatus,setGStatus,
   gRel,setGRel,gAge,setGAge,gGender,setGGender,parts,ageGroups,
   filteredLen,totalLen,setVPage,setBoothPage}){
   const isMobile=useWindowWidth()<640;
+  const [mobileFiltersOpen,setMobileFiltersOpen]=useState(false);
+  useEffect(()=>{
+    if(!isMobile) setMobileFiltersOpen(false);
+  },[isMobile]);
   const ageGroups2=["18–22","23–30","31–39","40–44★","45–60","60+","Unknown"];
-  return(
-    <div style={{display:"flex",gap:isMobile?8:6,flexWrap:"wrap",padding:isMobile?"10px 12px":"8px 12px",
-      background:C.panel,borderBottom:`1px solid ${C.border}`,alignItems:"center"}}>
-      <input value={gSearch} onChange={e=>{setGSearch(e.target.value);setVPage(0);}}
-        placeholder="🔍 Search name / voter ID / relation…"
-        style={{padding:isMobile?"8px 12px":"5px 10px",background:C.bg,border:`1px solid ${C.border}`,
-          borderRadius:6,color:C.text,fontSize:isMobile?14:12,flex:"1 1 220px",fontFamily:FONT}}/>
+  const hasActiveFilters=(gPart!=="all"||gStatus!=="all"||gRel!=="all"||gAge!=="all"||gGender!=="all"||gSearch);
+  const filterControls=(
+    <>
       {[
         ["Part",gPart,setGPart,["all",...parts]],
         ["Status",gStatus,setGStatus,["all","Active","Under Adjudication","Deleted"]],
@@ -858,12 +858,42 @@ function FilterBar({gSearch,setGSearch,gPart,setGPart,gStatus,setGStatus,
       <span style={{fontSize:isMobile?12:11,color:C.dim,whiteSpace:"nowrap",fontFamily:MONO}}>
         {filteredLen.toLocaleString()} / {totalLen.toLocaleString()}
       </span>
-      {(gPart!=="all"||gStatus!=="all"||gRel!=="all"||gAge!=="all"||gGender!=="all"||gSearch)&&(
-        <button onClick={()=>{setGPart("all");setGStatus("all");setGRel("all");setGAge("all");setGGender("all");setGSearch("");}}
+      {hasActiveFilters&&(
+        <button onClick={()=>{
+          setGPart("all");setGStatus("all");setGRel("all");setGAge("all");setGGender("all");setGSearch("");
+        }}
           style={{padding:isMobile?"7px 12px":"4px 10px",background:C.red+"22",border:`1px solid ${C.red}44`,
             borderRadius:5,color:C.red,fontSize:isMobile?12:11,cursor:"pointer",fontFamily:FONT}}>
           ✕ Clear
         </button>
+      )}
+    </>
+  );
+  return(
+    <div style={{display:"flex",gap:isMobile?8:6,flexWrap:"wrap",padding:isMobile?"10px 12px":"8px 12px",
+      background:C.panel,borderBottom:`1px solid ${C.border}`,alignItems:"center"}}>
+      <input value={gSearch} onChange={e=>{setGSearch(e.target.value);setVPage(0);}}
+        placeholder="🔍 Search name / voter ID / relation…"
+        style={{padding:isMobile?"8px 12px":"5px 10px",background:C.bg,border:`1px solid ${C.border}`,
+          borderRadius:6,color:C.text,fontSize:isMobile?14:12,flex:"1 1 220px",fontFamily:FONT}}/>
+      {isMobile?(
+        <>
+          <button onClick={()=>setMobileFiltersOpen(v=>!v)}
+            style={{padding:"8px 12px",background:C.bg,border:`1px solid ${C.border}`,
+              borderRadius:6,color:mobileFiltersOpen||hasActiveFilters?C.blue:C.muted,fontSize:13,cursor:"pointer",fontFamily:FONT,fontWeight:mobileFiltersOpen||hasActiveFilters?700:500}}>
+            Filters{hasActiveFilters?" •":""}
+          </button>
+          <span style={{fontSize:12,color:C.dim,whiteSpace:"nowrap",fontFamily:MONO}}>
+            {filteredLen.toLocaleString()} / {totalLen.toLocaleString()}
+          </span>
+          {mobileFiltersOpen&&(
+            <div style={{width:"100%",display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,paddingTop:4}}>
+              {filterControls}
+            </div>
+          )}
+        </>
+      ):(
+        filterControls
       )}
     </div>
   );
@@ -1025,6 +1055,7 @@ function AppInner(){
   const [tab,setTab]=useState("overview");
   const [allowHeavyCharts,setAllowHeavyCharts]=useState(false);
   const swipeRef=useRef({x:0,y:0,active:false});
+  const [mobileMenuOpen,setMobileMenuOpen]=useState(false);
 
   // File warnings (column errors, missing sheets)
   const [fileWarnings,setFileWarnings]=useState([]);
@@ -1099,6 +1130,10 @@ function AppInner(){
     }
     setAllowHeavyCharts(false);
   },[compactViewport,voters.length]);
+
+  useEffect(()=>{
+    if(!mobile) setMobileMenuOpen(false);
+  },[mobile]);
 
   const canRenderHeavyCharts=!compactViewport || allowHeavyCharts;
   const renderCompactViewportNotice=(title, detail="Charts are deferred on narrow screens to keep Android Chrome stable after upload.")=>(
@@ -6261,17 +6296,19 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
             AC {headerAcNo} · {headerAcName} · WB 2026
           </div>
         </div>
-        <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}>
+        <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap",position:"relative"}}>
           <button onClick={()=>setTheme(t=>t==="dark"?"light":"dark")}
             style={{padding:"4px 10px",background:C.panel,border:`1px solid ${C.border}`,
               borderRadius:5,color:C.muted,fontSize:mobile?12:11,cursor:"pointer"}}>
             {theme==="dark"?"☀ Light":"🌙 Dark"}
           </button>
-          <button onClick={()=>setChartStudioOpen(true)}
-            style={{padding:"4px 10px",background:C.panel,border:`1px solid ${C.border}`,
-              borderRadius:5,color:C.muted,fontSize:mobile?12:11,cursor:"pointer"}}>
-            Chart Studio
-          </button>
+          {!mobile&&(
+            <button onClick={()=>setChartStudioOpen(true)}
+              style={{padding:"4px 10px",background:C.panel,border:`1px solid ${C.border}`,
+                borderRadius:5,color:C.muted,fontSize:11,cursor:"pointer"}}>
+              Chart Studio
+            </button>
+          )}
           {Object.keys(overrides).length>0&&!mobile&&(
             <span style={{fontSize:11,color:C.yellow,fontFamily:MONO}}>
               ✎ {Object.keys(overrides).length}
@@ -6287,42 +6324,93 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
               dup {duplicateGroups.length}
             </span>
           )}
-          <button onClick={exportReportPack} disabled={reportBusy||analysisOnly}
-            style={{padding:"4px 10px",background:C.green+"22",border:`1px solid ${C.green}44`,
-              borderRadius:5,color:C.green,fontSize:mobile?12:11,cursor:reportBusy?"default":"pointer",fontWeight:600,
-              opacity:(reportBusy||analysisOnly)?0.6:1}}>
-            {reportBusy?"Exporting…":"Export Report Pack"}
-          </button>
-          <button onClick={exportSessionPack}
-            style={{padding:"4px 10px",background:C.panel,border:`1px solid ${C.border}`,
-              borderRadius:5,color:C.muted,fontSize:mobile?12:11,cursor:"pointer",fontWeight:600}}>
-            Export Session
-          </button>
-          <button onClick={()=>exportInsightsWorkbook(voters.map(v=>({...v,override:overrides[v._uid]||null})))} disabled={analysisOnly}
-            style={{padding:"4px 10px",background:C.panel,border:`1px solid ${C.border}`,
-              borderRadius:5,color:C.muted,fontSize:mobile?12:11,cursor:"pointer",fontWeight:600,opacity:analysisOnly?0.6:1}}>
-            Export Insights
-          </button>
-          <button onClick={()=>sessionFileRef.current?.click()}
-            style={{padding:"4px 10px",background:C.panel,border:`1px solid ${C.border}`,
-              borderRadius:5,color:C.muted,fontSize:mobile?12:11,cursor:"pointer",fontWeight:600}}>
-            Import Session
-          </button>
+          {!mobile&&(
+            <>
+              <button onClick={exportReportPack} disabled={reportBusy||analysisOnly}
+                style={{padding:"4px 10px",background:C.green+"22",border:`1px solid ${C.green}44`,
+                  borderRadius:5,color:C.green,fontSize:11,cursor:reportBusy?"default":"pointer",fontWeight:600,
+                  opacity:(reportBusy||analysisOnly)?0.6:1}}>
+                {reportBusy?"Exporting…":"Export Report Pack"}
+              </button>
+              <button onClick={exportSessionPack}
+                style={{padding:"4px 10px",background:C.panel,border:`1px solid ${C.border}`,
+                  borderRadius:5,color:C.muted,fontSize:11,cursor:"pointer",fontWeight:600}}>
+                Export Session
+              </button>
+              <button onClick={()=>exportInsightsWorkbook(voters.map(v=>({...v,override:overrides[v._uid]||null})))} disabled={analysisOnly}
+                style={{padding:"4px 10px",background:C.panel,border:`1px solid ${C.border}`,
+                  borderRadius:5,color:C.muted,fontSize:11,cursor:"pointer",fontWeight:600,opacity:analysisOnly?0.6:1}}>
+                Export Insights
+              </button>
+              <button onClick={()=>sessionFileRef.current?.click()}
+                style={{padding:"4px 10px",background:C.panel,border:`1px solid ${C.border}`,
+                  borderRadius:5,color:C.muted,fontSize:11,cursor:"pointer",fontWeight:600}}>
+                Import Session
+              </button>
+            </>
+          )}
           <button onClick={()=>fileRef.current?.click()}
             style={{padding:"4px 10px",background:C.blue+"22",border:`1px solid ${C.blue}44`,
               borderRadius:5,color:C.blue,fontSize:mobile?12:11,cursor:"pointer",fontWeight:600}}>
             + Load
           </button>
-          <button onClick={()=>{if(window.confirm("Clear all data and saved state?"))
-            {setVoters([]);setOverrides({});setTokenOverrides({});setLoadedFiles({});setLoadedFileMeta({});setLoadedInsightsMeta({});
-             setTokenLearnCount(0);
-             try{["eim_voters","eim_overrides","eim_tokenOverrides","eim_tokenLearnCount","eim_loadedFiles","eim_loadedFileMeta","eim_loadedInsightsMeta"]
-               .forEach(k=>localStorage.removeItem(k));}catch{}
-            }}}
-            style={{padding:"4px 10px",background:C.panel,border:`1px solid ${C.border}`,
-              borderRadius:5,color:C.dim,fontSize:mobile?12:11,cursor:"pointer"}}>
-            Reset
-          </button>
+          {!mobile&&(
+            <button onClick={()=>{if(window.confirm("Clear all data and saved state?"))
+              {setVoters([]);setOverrides({});setTokenOverrides({});setLoadedFiles({});setLoadedFileMeta({});setLoadedInsightsMeta({});
+               setTokenLearnCount(0);
+               try{["eim_voters","eim_overrides","eim_tokenOverrides","eim_tokenLearnCount","eim_loadedFiles","eim_loadedFileMeta","eim_loadedInsightsMeta"]
+                 .forEach(k=>localStorage.removeItem(k));}catch{}
+              }}}
+              style={{padding:"4px 10px",background:C.panel,border:`1px solid ${C.border}`,
+                borderRadius:5,color:C.dim,fontSize:11,cursor:"pointer"}}>
+              Reset
+            </button>
+          )}
+          {mobile&&(
+            <>
+              <button onClick={()=>setMobileMenuOpen(v=>!v)}
+                style={{padding:"4px 10px",background:C.panel,border:`1px solid ${C.border}`,
+                  borderRadius:5,color:C.muted,fontSize:12,cursor:"pointer",fontWeight:700}}>
+                More
+              </button>
+              {mobileMenuOpen&&(
+                <div style={{position:"absolute",top:"100%",right:0,marginTop:6,minWidth:210,zIndex:40,
+                  background:C.panel,border:`1px solid ${C.border}`,borderRadius:10,padding:8,
+                  boxShadow:"0 12px 30px rgba(0,0,0,0.25)",display:"flex",flexDirection:"column",gap:6}}>
+                  <button onClick={()=>{setMobileMenuOpen(false);setChartStudioOpen(true);}}
+                    style={{padding:"8px 10px",background:"transparent",border:`1px solid ${C.border}`,borderRadius:6,color:C.text,fontSize:12,cursor:"pointer",textAlign:"left"}}>Chart Studio</button>
+                  <button onClick={()=>{setMobileMenuOpen(false);if(!analysisOnly) exportReportPack();}}
+                    disabled={reportBusy||analysisOnly}
+                    style={{padding:"8px 10px",background:"transparent",border:`1px solid ${C.border}`,borderRadius:6,color:analysisOnly?C.dim:C.text,fontSize:12,cursor:(reportBusy||analysisOnly)?"default":"pointer",textAlign:"left",opacity:(reportBusy||analysisOnly)?0.6:1}}>{reportBusy?"Exporting…":"Export Report Pack"}</button>
+                  <button onClick={()=>{setMobileMenuOpen(false);exportSessionPack();}}
+                    style={{padding:"8px 10px",background:"transparent",border:`1px solid ${C.border}`,borderRadius:6,color:C.text,fontSize:12,cursor:"pointer",textAlign:"left"}}>Export Session</button>
+                  <button onClick={()=>{setMobileMenuOpen(false);if(!analysisOnly) exportInsightsWorkbook(voters.map(v=>({...v,override:overrides[v._uid]||null})));}}
+                    disabled={analysisOnly}
+                    style={{padding:"8px 10px",background:"transparent",border:`1px solid ${C.border}`,borderRadius:6,color:analysisOnly?C.dim:C.text,fontSize:12,cursor:analysisOnly?"default":"pointer",textAlign:"left",opacity:analysisOnly?0.6:1}}>Export Insights</button>
+                  <button onClick={()=>{setMobileMenuOpen(false);sessionFileRef.current?.click();}}
+                    style={{padding:"8px 10px",background:"transparent",border:`1px solid ${C.border}`,borderRadius:6,color:C.text,fontSize:12,cursor:"pointer",textAlign:"left"}}>Import Session</button>
+                  {Object.keys(overrides).length>0&&(
+                    <div style={{padding:"4px 2px",fontSize:11,color:C.yellow,fontFamily:MONO}}>✎ {Object.keys(overrides).length} overrides</div>
+                  )}
+                  <div style={{padding:"4px 2px",fontSize:11,color:C.dim,fontFamily:MONO}}>
+                    {(analysisOnly?analysisOnlyData.totals.total:voters.length).toLocaleString()} · {(analysisOnly?analysisOnlyData.partRows.length:parts.length)} parts
+                  </div>
+                  {duplicateGroups.length>0&&(
+                    <div style={{padding:"4px 2px",fontSize:11,color:C.orange,fontFamily:MONO}}>
+                      dup {duplicateGroups.length}
+                    </div>
+                  )}
+                  <button onClick={()=>{setMobileMenuOpen(false);if(window.confirm("Clear all data and saved state?"))
+                    {setVoters([]);setOverrides({});setTokenOverrides({});setLoadedFiles({});setLoadedFileMeta({});setLoadedInsightsMeta({});
+                     setTokenLearnCount(0);
+                     try{["eim_voters","eim_overrides","eim_tokenOverrides","eim_tokenLearnCount","eim_loadedFiles","eim_loadedFileMeta","eim_loadedInsightsMeta"]
+                       .forEach(k=>localStorage.removeItem(k));}catch{}
+                    }}}
+                    style={{padding:"8px 10px",background:"transparent",border:`1px solid ${C.border}`,borderRadius:6,color:C.red,fontSize:12,cursor:"pointer",textAlign:"left"}}>Reset</button>
+                </div>
+              )}
+            </>
+          )}
           <input ref={fileRef} type="file" accept=".xlsx" multiple style={{display:"none"}}
             onChange={e=>loadFiles(Array.from(e.target.files))}/>
           <input ref={sessionFileRef} type="file" accept=".eimpack,.json,.xlsx" style={{display:"none"}}
