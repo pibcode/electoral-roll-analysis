@@ -2256,6 +2256,7 @@ function AppInner(){
       setTab("overview");
     }
   },[analysisOnly,tab]);
+  const reviewLockedChartTabs=["overview","religion","age","custom","trends","booths"];
 
   const needDuplicateData=!compactViewport || tab==="duplicates";
   const needTrendData=!compactViewport || tab==="trends";
@@ -2279,6 +2280,12 @@ function AppInner(){
 
   // Voters needing religion review
   const needsReview=useMemo(()=>voters.filter(v=>!overrides[v._uid]&&(v.religion==="Unknown"||v.religion==="Uncertain")),[voters,overrides]);
+  const reviewRequired=!analysisOnly && voters.length>0 && needsReview.length>0;
+  useEffect(()=>{
+    if(reviewRequired && reviewLockedChartTabs.includes(tab)){
+      setTab("review");
+    }
+  },[reviewRequired,tab]);
 
   const duplicateGroups=useMemo(()=>{
     if(!needDuplicateData) return [];
@@ -6420,6 +6427,8 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
   ];
 
   const tabIds=TABS.map(t=>t.id);
+  const isChartTabBlocked=(tabId)=>reviewRequired && reviewLockedChartTabs.includes(tabId);
+  const blockActiveTabRender=isChartTabBlocked(tab);
   const swipeBlockedTarget=(target)=>{
     if(!target?.closest) return false;
     if(target.closest("input,textarea,select,option,a,label,[data-no-swipe]")) return true;
@@ -7522,13 +7531,16 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
         onTouchStart={handleSwipeStart}
         onTouchEnd={handleSwipeEnd}>
         {TABS.map(({id,label,badge})=>(
-          <button key={id} onClick={()=>setTab(id)} style={{
+          <button key={id} onClick={()=>{
+            if(isChartTabBlocked(id)){ setTab("review"); return; }
+            setTab(id);
+          }} style={{
             padding:mobile?"11px 13px":"10px 16px",background:"none",border:"none",
             borderBottom:`3px solid ${tab===id?C.blue:"transparent"}`,
-            color:tab===id?C.blue:C.dim,fontSize:mobile?13.5:12.5,fontWeight:tab===id?700:400,
+            color:tab===id?C.blue:(isChartTabBlocked(id)?C.adj:C.dim),fontSize:mobile?13.5:12.5,fontWeight:tab===id?700:400,
             cursor:"pointer",fontFamily:FONT,transition:"color 0.15s",whiteSpace:"nowrap",
             position:"relative"}}>
-            {label}
+            {label}{isChartTabBlocked(id)?" 🔒":""}
             {badge>0&&<span style={{
               position:"absolute",top:5,right:3,
               background:C.yellow,color:"#000",borderRadius:8,
@@ -7557,12 +7569,30 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
       <div id="tabContentRoot"
         style={{padding:mobile?"10px 8px":tablet?"14px 16px":"20px 24px"}}>
         {loading&&<div style={{textAlign:"center",padding:40,color:C.blue,fontFamily:MONO}}>Processing files…</div>}
-        {tab==="overview"&&(analysisOnly?renderAnalysisOnlyOverview():renderOverview())}
-        {tab==="religion"&&(analysisOnly?renderAnalysisOnlyReligion():renderReligion())}
-        {tab==="age"&&(analysisOnly?renderAnalysisOnlyAge():renderAge())}
-        {tab==="custom"&&!analysisOnly&&renderCustomAnalytics()}
-        {tab==="trends"&&!analysisOnly&&renderTrends()}
-        {tab==="booths"&&!analysisOnly&&renderBooths()}
+        {reviewRequired&&(
+          <div style={{
+            marginBottom:14,padding:"10px 12px",borderRadius:10,
+            background:C.yellow+"12",border:`1px solid ${C.yellow}44`,
+            display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,flexWrap:"wrap"
+          }}>
+            <div style={{fontSize:12,color:C.text,lineHeight:1.6}}>
+              <b style={{color:C.yellow}}>Review is mandatory before chart analysis.</b> Resolve all
+              {" "}<b>{needsReview.length}</b> unknown/uncertain entries in the <b>Review</b> tab to unlock Overview, Religion, Age, Custom Analytics, Trends, and Booths.
+            </div>
+            {tab!=="review"&&(
+              <button onClick={()=>setTab("review")}
+                style={{padding:"6px 10px",background:C.yellow+"22",border:`1px solid ${C.yellow}55`,borderRadius:6,color:C.yellow,fontSize:12,cursor:"pointer",fontWeight:700}}>
+                Go to Review
+              </button>
+            )}
+          </div>
+        )}
+        {!blockActiveTabRender&&tab==="overview"&&(analysisOnly?renderAnalysisOnlyOverview():renderOverview())}
+        {!blockActiveTabRender&&tab==="religion"&&(analysisOnly?renderAnalysisOnlyReligion():renderReligion())}
+        {!blockActiveTabRender&&tab==="age"&&(analysisOnly?renderAnalysisOnlyAge():renderAge())}
+        {!blockActiveTabRender&&tab==="custom"&&!analysisOnly&&renderCustomAnalytics()}
+        {!blockActiveTabRender&&tab==="trends"&&!analysisOnly&&renderTrends()}
+        {!blockActiveTabRender&&tab==="booths"&&!analysisOnly&&renderBooths()}
         {tab==="duplicates"&&!analysisOnly&&renderDuplicates()}
         {tab==="voters"&&!analysisOnly&&renderVoters()}
         {tab==="review"&&!analysisOnly&&renderReview()}
