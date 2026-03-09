@@ -832,14 +832,15 @@ function rowSemanticSignature(row){
 function FilterBar({gSearch,setGSearch,gPart,setGPart,gStatus,setGStatus,
   gRel,setGRel,gAge,setGAge,gGender,setGGender,parts,ageGroups,
   filteredLen,totalLen,setVPage,setBoothPage}){
+  const isMobile=useWindowWidth()<640;
   const ageGroups2=["18–22","23–30","31–39","40–44★","45–60","60+","Unknown"];
   return(
-    <div style={{display:"flex",gap:6,flexWrap:"wrap",padding:"8px 12px",
+    <div style={{display:"flex",gap:isMobile?8:6,flexWrap:"wrap",padding:isMobile?"10px 12px":"8px 12px",
       background:C.panel,borderBottom:`1px solid ${C.border}`,alignItems:"center"}}>
       <input value={gSearch} onChange={e=>{setGSearch(e.target.value);setVPage(0);}}
         placeholder="🔍 Search name / voter ID / relation…"
-        style={{padding:"5px 10px",background:C.bg,border:`1px solid ${C.border}`,
-          borderRadius:6,color:C.text,fontSize:12,flex:"1 1 200px",fontFamily:FONT}}/>
+        style={{padding:isMobile?"8px 12px":"5px 10px",background:C.bg,border:`1px solid ${C.border}`,
+          borderRadius:6,color:C.text,fontSize:isMobile?14:12,flex:"1 1 220px",fontFamily:FONT}}/>
       {[
         ["Part",gPart,setGPart,["all",...parts]],
         ["Status",gStatus,setGStatus,["all","Active","Under Adjudication","Deleted"]],
@@ -849,18 +850,18 @@ function FilterBar({gSearch,setGSearch,gPart,setGPart,gStatus,setGStatus,
       ].map(([lbl,val,set,opts])=>(
         <select key={lbl} value={val}
           onChange={e=>{set(e.target.value);setVPage(0);setBoothPage(0);}}
-          style={{padding:"5px 8px",background:C.bg,border:`1px solid ${C.border}`,
-            borderRadius:6,color:val!=="all"?C.blue:C.muted,fontSize:12,fontFamily:FONT}}>
+          style={{padding:isMobile?"8px 10px":"5px 8px",background:C.bg,border:`1px solid ${C.border}`,
+            borderRadius:6,color:val!=="all"?C.blue:C.muted,fontSize:isMobile?13:12,fontFamily:FONT}}>
           {opts.map(o=><option key={o} value={o}>{o==="all"?`All ${lbl}s`:o}</option>)}
         </select>
       ))}
-      <span style={{fontSize:11,color:C.dim,whiteSpace:"nowrap",fontFamily:MONO}}>
+      <span style={{fontSize:isMobile?12:11,color:C.dim,whiteSpace:"nowrap",fontFamily:MONO}}>
         {filteredLen.toLocaleString()} / {totalLen.toLocaleString()}
       </span>
       {(gPart!=="all"||gStatus!=="all"||gRel!=="all"||gAge!=="all"||gGender!=="all"||gSearch)&&(
         <button onClick={()=>{setGPart("all");setGStatus("all");setGRel("all");setGAge("all");setGGender("all");setGSearch("");}}
-          style={{padding:"4px 10px",background:C.red+"22",border:`1px solid ${C.red}44`,
-            borderRadius:5,color:C.red,fontSize:11,cursor:"pointer",fontFamily:FONT}}>
+          style={{padding:isMobile?"7px 12px":"4px 10px",background:C.red+"22",border:`1px solid ${C.red}44`,
+            borderRadius:5,color:C.red,fontSize:isMobile?12:11,cursor:"pointer",fontFamily:FONT}}>
           ✕ Clear
         </button>
       )}
@@ -6221,7 +6222,8 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
   const tabIds=TABS.map(t=>t.id);
   const swipeBlockedTarget=(target)=>{
     if(!target?.closest) return false;
-    return !!target.closest("button,input,textarea,select,option,a,label,[role='button'],[data-no-swipe],.recharts-legend-wrapper");
+    if(target.closest("input,textarea,select,option,a,label,[data-no-swipe]")) return true;
+    return false;
   };
   const handleSwipeStart=(e)=>{
     if(!mobile) return;
@@ -6247,14 +6249,14 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
   return(
     <div style={{minHeight:"100vh",background:C.bg,color:C.text,fontFamily:FONT}}>
       {/* Header */}
-      <div style={{borderBottom:`1px solid ${C.border}`,padding:mobile?"8px 12px":"9px 20px",
+      <div style={{borderBottom:`1px solid ${C.border}`,padding:mobile?"10px 12px":"9px 20px",
         display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",
         position:"sticky",top:0,zIndex:30,background:C.bg}}>
         <div style={{flex:1,minWidth:0}}>
           {!mobile&&<div style={{fontSize:9,color:C.dim,letterSpacing:4,textTransform:"uppercase",fontFamily:MONO}}>
             Electoral Integrity Monitor v1.0
           </div>}
-          <div style={{fontSize:mobile?12:14,fontWeight:800,color:C.text,letterSpacing:-0.5,
+          <div style={{fontSize:mobile?15:14,fontWeight:800,color:C.text,letterSpacing:-0.5,
             whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
             AC {headerAcNo} · {headerAcName} · WB 2026
           </div>
@@ -6262,12 +6264,12 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
         <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}>
           <button onClick={()=>setTheme(t=>t==="dark"?"light":"dark")}
             style={{padding:"4px 10px",background:C.panel,border:`1px solid ${C.border}`,
-              borderRadius:5,color:C.muted,fontSize:11,cursor:"pointer"}}>
+              borderRadius:5,color:C.muted,fontSize:mobile?12:11,cursor:"pointer"}}>
             {theme==="dark"?"☀ Light":"🌙 Dark"}
           </button>
           <button onClick={()=>setChartStudioOpen(true)}
             style={{padding:"4px 10px",background:C.panel,border:`1px solid ${C.border}`,
-              borderRadius:5,color:C.muted,fontSize:11,cursor:"pointer"}}>
+              borderRadius:5,color:C.muted,fontSize:mobile?12:11,cursor:"pointer"}}>
             Chart Studio
           </button>
           {Object.keys(overrides).length>0&&!mobile&&(
@@ -6287,28 +6289,28 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
           )}
           <button onClick={exportReportPack} disabled={reportBusy||analysisOnly}
             style={{padding:"4px 10px",background:C.green+"22",border:`1px solid ${C.green}44`,
-              borderRadius:5,color:C.green,fontSize:11,cursor:reportBusy?"default":"pointer",fontWeight:600,
+              borderRadius:5,color:C.green,fontSize:mobile?12:11,cursor:reportBusy?"default":"pointer",fontWeight:600,
               opacity:(reportBusy||analysisOnly)?0.6:1}}>
             {reportBusy?"Exporting…":"Export Report Pack"}
           </button>
           <button onClick={exportSessionPack}
             style={{padding:"4px 10px",background:C.panel,border:`1px solid ${C.border}`,
-              borderRadius:5,color:C.muted,fontSize:11,cursor:"pointer",fontWeight:600}}>
+              borderRadius:5,color:C.muted,fontSize:mobile?12:11,cursor:"pointer",fontWeight:600}}>
             Export Session
           </button>
           <button onClick={()=>exportInsightsWorkbook(voters.map(v=>({...v,override:overrides[v._uid]||null})))} disabled={analysisOnly}
             style={{padding:"4px 10px",background:C.panel,border:`1px solid ${C.border}`,
-              borderRadius:5,color:C.muted,fontSize:11,cursor:"pointer",fontWeight:600,opacity:analysisOnly?0.6:1}}>
+              borderRadius:5,color:C.muted,fontSize:mobile?12:11,cursor:"pointer",fontWeight:600,opacity:analysisOnly?0.6:1}}>
             Export Insights
           </button>
           <button onClick={()=>sessionFileRef.current?.click()}
             style={{padding:"4px 10px",background:C.panel,border:`1px solid ${C.border}`,
-              borderRadius:5,color:C.muted,fontSize:11,cursor:"pointer",fontWeight:600}}>
+              borderRadius:5,color:C.muted,fontSize:mobile?12:11,cursor:"pointer",fontWeight:600}}>
             Import Session
           </button>
           <button onClick={()=>fileRef.current?.click()}
             style={{padding:"4px 10px",background:C.blue+"22",border:`1px solid ${C.blue}44`,
-              borderRadius:5,color:C.blue,fontSize:11,cursor:"pointer",fontWeight:600}}>
+              borderRadius:5,color:C.blue,fontSize:mobile?12:11,cursor:"pointer",fontWeight:600}}>
             + Load
           </button>
           <button onClick={()=>{if(window.confirm("Clear all data and saved state?"))
@@ -6318,7 +6320,7 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
                .forEach(k=>localStorage.removeItem(k));}catch{}
             }}}
             style={{padding:"4px 10px",background:C.panel,border:`1px solid ${C.border}`,
-              borderRadius:5,color:C.dim,fontSize:11,cursor:"pointer"}}>
+              borderRadius:5,color:C.dim,fontSize:mobile?12:11,cursor:"pointer"}}>
             Reset
           </button>
           <input ref={fileRef} type="file" accept=".xlsx" multiple style={{display:"none"}}
@@ -7088,19 +7090,21 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
       {/* Tabs */}
       <div style={{borderBottom:`1px solid ${C.border}`,display:"flex",gap:0,
         background:C.bg,overflowX:"auto",WebkitOverflowScrolling:"touch",
-        scrollbarWidth:"none",msOverflowStyle:"none"}}>
+        scrollbarWidth:"none",msOverflowStyle:"none"}}
+        onTouchStart={handleSwipeStart}
+        onTouchEnd={handleSwipeEnd}>
         {TABS.map(({id,label,badge})=>(
           <button key={id} onClick={()=>setTab(id)} style={{
-            padding:mobile?"8px 10px":"10px 16px",background:"none",border:"none",
-            borderBottom:`2px solid ${tab===id?C.blue:"transparent"}`,
-            color:tab===id?C.blue:C.dim,fontSize:mobile?11:12.5,fontWeight:tab===id?700:400,
+            padding:mobile?"11px 13px":"10px 16px",background:"none",border:"none",
+            borderBottom:`3px solid ${tab===id?C.blue:"transparent"}`,
+            color:tab===id?C.blue:C.dim,fontSize:mobile?13.5:12.5,fontWeight:tab===id?700:400,
             cursor:"pointer",fontFamily:FONT,transition:"color 0.15s",whiteSpace:"nowrap",
             position:"relative"}}>
             {label}
             {badge>0&&<span style={{
-              position:"absolute",top:6,right:4,
+              position:"absolute",top:5,right:3,
               background:C.yellow,color:"#000",borderRadius:8,
-              fontSize:9,fontWeight:800,padding:"1px 4px",lineHeight:1.4}}>
+              fontSize:mobile?10:9,fontWeight:800,padding:"1px 4px",lineHeight:1.4}}>
               {badge}
             </span>}
           </button>
@@ -7123,8 +7127,6 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
 
       {/* Content */}
       <div id="tabContentRoot"
-        onTouchStart={handleSwipeStart}
-        onTouchEnd={handleSwipeEnd}
         style={{padding:mobile?"10px 8px":tablet?"14px 16px":"20px 24px"}}>
         {loading&&<div style={{textAlign:"center",padding:40,color:C.blue,fontFamily:MONO}}>Processing files…</div>}
         {tab==="overview"&&(analysisOnly?renderAnalysisOnlyOverview():renderOverview())}
