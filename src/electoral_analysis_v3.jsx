@@ -410,14 +410,15 @@ async function exportChartGraphic({
   subtitle="",
   note="",
   includeTimestamp=false,
+  headerAlign="left",
 }){
   const el=document.getElementById(containerId);
   if(!el) throw new Error(`Chart container not found: ${containerId}`);
   const safeName=(String(filename||"chart").replace(/[<>:"/\\|?*\x00-\x1F]/g," ").trim()||"chart");
   const bg=normalizeHexColor(background,"#ffffff");
-  const rect=el.getBoundingClientRect();
-  const measuredW=Math.max(420,Math.round(rect.width||width||1200));
-  const measuredH=Math.max(220,Math.round(rect.height||height||500));
+  const measured=measureExportBox(el,width||1200,height||520);
+  const measuredW=Math.max(420,Math.round(measured.width||width||1200));
+  const measuredH=Math.max(220,Math.round(measured.height||height||500));
   const targetW=Math.max(420,Math.round(width||measuredW));
   const headerHeight=(title||subtitle||note||includeTimestamp)?110:0;
   const ts=includeTimestamp?`Generated: ${new Date().toLocaleString()}`:"";
@@ -474,17 +475,21 @@ async function exportChartGraphic({
 
   const hdrPx=Math.round(headerHeight*scale);
   if(headerHeight>0){
+    const align=headerAlign==="center"?"center":"left";
+    const textX=align==="center"?Math.round(canvas.width/2):Math.round(18*scale);
+    ctx.textAlign=align;
     ctx.fillStyle=textPrimary;
-    ctx.font=`${Math.round(22*scale/2)}px Inter, Segoe UI, sans-serif`;
-    if(title) ctx.fillText(String(title),Math.round(18*scale),Math.round(28*scale));
+    ctx.font=`${Math.round(22*scale)}px Inter, Segoe UI, sans-serif`;
+    if(title) ctx.fillText(String(title),textX,Math.round(28*scale));
     ctx.fillStyle=textSecondary;
-    ctx.font=`${Math.round(13*scale/2)}px Inter, Segoe UI, sans-serif`;
-    if(subtitle) ctx.fillText(String(subtitle),Math.round(18*scale),Math.round(48*scale));
+    ctx.font=`${Math.round(13*scale)}px Inter, Segoe UI, sans-serif`;
+    if(subtitle) ctx.fillText(String(subtitle),textX,Math.round(48*scale));
     if(note||ts){
       ctx.fillStyle=textMuted;
-      ctx.font=`${Math.round(11*scale/2)}px Inter, Segoe UI, sans-serif`;
-      ctx.fillText([note,ts].filter(Boolean).join(" | "),Math.round(18*scale),Math.round(66*scale));
+      ctx.font=`${Math.round(11*scale)}px Inter, Segoe UI, sans-serif`;
+      ctx.fillText([note,ts].filter(Boolean).join(" | "),textX,Math.round(66*scale));
     }
+    ctx.textAlign="left";
   }
   const availW=canvas.width;
   const availH=Math.max(1,canvas.height-hdrPx);
@@ -737,6 +742,96 @@ const BiasBadge=({r})=>{
   return <Tag c={`${rn.toFixed(2)}x REV`} color="#a78bfa" bg="#a78bfa22"/>;
 };
 const TT={contentStyle:{background:C.bg,border:`1px solid ${C.border}`,borderRadius:8,fontSize:12,color:C.text,fontFamily:FONT}};
+const ResizableChartFrame=({height=220,minHeight=160,minWidth=280,style={},children})=>{
+  const ref=useRef(null);
+  const rafRef=useRef(null);
+  const [size,setSize]=useState({width:null,height});
+
+  useEffect(()=>{
+    setSize(prev=>prev.height===height?prev:{...prev,height});
+  },[height]);
+
+  useEffect(()=>{
+    const node=ref.current;
+    if(!node) return;
+    let cancelled=false;
+    const commitSize=(width,heightValue)=>{
+      if(cancelled) return;
+      setSize(prev=>{
+        const nextWidth=Math.max(minWidth,Math.round(width||prev.width||minWidth));
+        const nextHeight=Math.max(minHeight,Math.round(heightValue||prev.height||height||minHeight));
+        if(prev.width===nextWidth && prev.height===nextHeight) return prev;
+        return {width:nextWidth,height:nextHeight};
+      });
+    };
+    const initialWidth=Math.round(node.getBoundingClientRect().width||node.clientWidth||minWidth);
+    commitSize(initialWidth,size.height||height);
+    const ro=new ResizeObserver(entries=>{
+      const box=entries?.[0]?.contentRect;
+      if(!box) return;
+      if(rafRef.current) cancelAnimationFrame(rafRef.current);
+      rafRef.current=requestAnimationFrame(()=>{
+        commitSize(box.width,box.height);
+      });
+    });
+    ro.observe(node);
+    return ()=>{
+      cancelled=true;
+      ro.disconnect();
+      if(rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
+  },[height,minHeight,minWidth]);
+
+  return(
+    <div
+      ref={ref}
+      style={{
+        width:size.width?`${size.width}px`:"100%",
+        maxWidth:"100%",
+        height:size.height,
+        minHeight,
+        minWidth,
+        resize:"both",
+        overflow:"hidden",
+        boxSizing:"border-box",
+        ...style,
+      }}
+      data-export-sizable="true"
+      data-export-width={size.width||""}
+      data-export-height={size.height||""}
+    >
+      <ResponsiveContainer width="100%" height="100%">
+        {children}
+      </ResponsiveContainer>
+    </div>
+  );
+};
+
+function measureExportBox(el, fallbackWidth=1200, fallbackHeight=520){
+  if(!el) return {width:fallbackWidth,height:fallbackHeight};
+  const sizable=Array.from(el.querySelectorAll?.('[data-export-sizable="true"]')||[]);
+  const candidates=sizable.length?sizable:[el];
+  const widths=candidates.map(node=>{
+    const explicit=Number(node?.dataset?.exportWidth||0);
+    return Math.max(
+      explicit,
+      Math.round(node?.clientWidth||0),
+      Math.round(node?.getBoundingClientRect?.().width||0),
+    );
+  });
+  const heights=candidates.map(node=>{
+    const explicit=Number(node?.dataset?.exportHeight||0);
+    return Math.max(
+      explicit,
+      Math.round(node?.clientHeight||0),
+      Math.round(node?.getBoundingClientRect?.().height||0),
+    );
+  });
+  return {
+    width:Math.max(400,fallbackWidth,...widths),
+    height:Math.max(240,fallbackHeight,...heights),
+  };
+}
 
 // ── Status badge ─────────────────────────────────────────────────────────────
 const StatusBadge=({s})=>{
@@ -1126,7 +1221,7 @@ function FilterBar({gSearch,setGSearch,gPart,setGPart,gStatus,setGStatus,
 }
 
 // ══ UPLOAD SCREEN ════════════════════════════════════════════════════════════
-function UploadScreen({onFiles,loading,theme,setTheme}){
+function UploadScreen({onFiles,loading,theme,setTheme,onImportSession}){
   const ref=useRef();
   const isMobile=useWindowWidth()<920;
   const uploadFeatureCardBg=theme==="dark" ? "#0d1526" : "#ffffff";
@@ -1171,6 +1266,10 @@ function UploadScreen({onFiles,loading,theme,setTheme}){
                 <button onClick={(e)=>{e.stopPropagation();ref.current?.click();}}
                   style={{padding:"7px 14px",background:C.blue+"22",border:`1px solid ${C.blue}66`,borderRadius:8,color:C.blue,fontSize:12,cursor:"pointer",fontWeight:700}}>
                   Choose Excel Files
+                </button>
+                <button onClick={(e)=>{e.stopPropagation();onImportSession?.();}}
+                  style={{padding:"7px 14px",background:C.green+"18",border:`1px solid ${C.green}55`,borderRadius:8,color:C.green,fontSize:12,cursor:"pointer",fontWeight:700}}>
+                  Import Session / Resume Work
                 </button>
                 <button onClick={(e)=>{e.stopPropagation();copyPlainText(CLAUDE_EXTRACTION_PROMPT,"Claude extraction prompt");}}
                   style={{padding:"7px 14px",background:"transparent",border:`1px solid ${C.border}`,borderRadius:8,color:C.muted,fontSize:12,cursor:"pointer"}}>
@@ -1246,6 +1345,12 @@ function UploadScreen({onFiles,loading,theme,setTheme}){
                 Send volunteer-generated Excel files to <b>wbsir2025@gmail.com</b> or <b>wbsir2026@gmail.com</b>.
               </div>
             </div>
+            <div style={{marginTop:12,padding:"10px 12px",border:`1px solid ${C.border}`,borderRadius:9,background:uploadSubpanelBg}}>
+              <div style={{fontSize:12,fontWeight:700,color:C.text,marginBottom:4}}>Resume someone else&apos;s work</div>
+              <div style={{fontSize:11.5,color:C.muted,lineHeight:1.7}}>
+                Use <b>Import Session</b> to continue from another person&apos;s exported session. The companion session workbook <b>.xlsx</b> is usually smaller than <b>.eimpack</b>, while <b>.eimpack</b> preserves the full portable app state.
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -1302,6 +1407,8 @@ export default function App(){
 
   // Booth tab state
   const [boothPart,setBoothPart]=useState(null);
+  const [boothPartsSelected,setBoothPartsSelected]=useState([]);
+  const [boothSelectionTouched,setBoothSelectionTouched]=useState(false);
   const [boothSearch,setBoothSearch]=useState("");
   const [boothRelFilter,setBoothRelFilter]=useState("all");
   const [boothStatusFilter,setBoothStatusFilter]=useState("all");
@@ -1333,12 +1440,17 @@ export default function App(){
   const [chartExportModal,setChartExportModal]=useState(null);
   const [tableExportModal,setTableExportModal]=useState(null);
   const [chartStudioOpen,setChartStudioOpen]=useState(false);
+  const [boothFigureSettingsOpen,setBoothFigureSettingsOpen]=useState(false);
   const [chartPrefs,setChartPrefs]=useState({
     showLegend:true,
     showValueLabels:true,
     valueLabelPos:"top", // top|inside|right
     xAxisLabel:"",
     yAxisLabel:"",
+    chartScale:1,
+    customAnalyticsHeight:300,
+    boothReportHeight:320,
+    boothReportCols:2,
     activeColor:"#3b82f6",
     underAdjColor:"#ef4444",
     deletedColor:"#be123c",
@@ -1445,6 +1557,7 @@ export default function App(){
 
   const fileRef=useRef();
   const tokenFileRef=useRef();
+  const tokenPackFileRef=useRef();
   const sessionFileRef=useRef();
   const PAGE_SIZE=50;
 
@@ -1458,6 +1571,11 @@ export default function App(){
       document.body.style.color=C.text;
     }
   },[theme]);
+
+  const chartScale=Math.max(0.75,Math.min(2,Number(chartPrefs.chartScale)||1));
+  const customAnalyticsBaseHeight=Math.max(240,Math.min(900,Number(chartPrefs.customAnalyticsHeight)||300));
+  const boothReportBaseHeight=Math.max(240,Math.min(900,Number(chartPrefs.boothReportHeight)||320));
+  const chartH=useCallback((base)=>Math.max(120,Math.round(base*chartScale)),[chartScale]);
 
   const importLabeledNamesFile=useCallback(async(file)=>{
     if(!file) return;
@@ -1529,6 +1647,63 @@ export default function App(){
       window.alert(`Token import failed: ${err?.message||"unknown error"}`);
     }
   },[tokenOverrides]);
+
+  const importTokenPackFile=useCallback(async(file)=>{
+    if(!file) return;
+    try{
+      const lower=String(file.name||"").toLowerCase();
+      let rows=[];
+      if(lower.endsWith(".json")){
+        const txt=await file.text();
+        const parsed=JSON.parse(txt);
+        rows=Array.isArray(parsed)?parsed:(Array.isArray(parsed?.tokens)?parsed.tokens:[]);
+      }else if(lower.endsWith(".csv")){
+        const txt=await file.text();
+        const wb=XLSX.read(txt,{type:"string"});
+        const ws=wb.Sheets[wb.SheetNames[0]];
+        if(!ws) throw new Error("No sheet found.");
+        rows=XLSX.utils.sheet_to_json(ws,{defval:""});
+      }else{
+        const buf=await file.arrayBuffer();
+        const wb=XLSX.read(buf,{type:"array"});
+        const ws=wb.Sheets[wb.SheetNames[0]];
+        if(!ws) throw new Error("No sheet found.");
+        rows=XLSX.utils.sheet_to_json(ws,{defval:""});
+      }
+      if(!rows.length) throw new Error("No token rows found.");
+      const norm=s=>String(s||"").trim().toLowerCase();
+      const cols=Object.keys(rows[0]||{});
+      const tokenCol=cols.find(c=>["token","name"].includes(norm(c))) || cols.find(c=>norm(c).includes("token"));
+      const scoreCol=cols.find(c=>["current score","score","current_score"].includes(norm(c))) || cols.find(c=>norm(c).includes("score"));
+      if(!tokenCol||!scoreCol) throw new Error(`Could not detect token/score columns. Found: ${cols.join(", ")}`);
+      const mode=window.confirm("Token import mode:\nOK = replace current token edits\nCancel = merge/update into current token edits")?"replace":"merge";
+      const imported={};
+      let applied=0, skipped=0;
+      rows.forEach(r=>{
+        const tok=String(r[tokenCol]||"").trim().toUpperCase();
+        const raw=r[scoreCol];
+        const num=raw===-1||String(raw).trim()==="-1"?-1:parseFloat(raw);
+        if(!tok || (num!==-1 && (Number.isNaN(num)||num<0||num>1))){ skipped++; return; }
+        imported[tok]=num===-1?-1:+num.toFixed(3);
+        applied++;
+      });
+      if(mode==="replace") setTokenOverrides(imported);
+      else setTokenOverrides(prev=>({...prev,...imported}));
+      setTokenImportSummary({
+        file:file.name,
+        rows:rows.length,
+        usedRows:applied,
+        skippedRows:skipped,
+        addedN:applied,
+        updatedN:0,
+        skippedN:skipped,
+        totalImported:applied,
+      });
+      window.alert(`Token pack import complete.\nApplied: ${applied}\nSkipped: ${skipped}\nMode: ${mode}`);
+    }catch(err){
+      window.alert(`Token pack import failed: ${err?.message||"unknown error"}`);
+    }
+  },[]);
 
   // ── Column alias map: canonical → list of accepted aliases (all lowercase) ──
   const COLUMN_ALIASES={
@@ -1975,7 +2150,10 @@ export default function App(){
         });
       }
       const allMergedParts=[...new Set(merged.map(v=>v.part_no))].sort((a,b)=>+a-+b);
-      if(allMergedParts.length&&boothPart===null) setBoothPart(allMergedParts[0]);
+      if(allMergedParts.length&&boothPart===null){
+        setBoothPart(allMergedParts[0]);
+        setBoothPartsSelected(prev=>prev.length?prev:[allMergedParts[0]]);
+      }
     }catch(e){
       setFileWarnings(prev=>[...prev,{file:"unknown",type:"error",msg:e.message}]);
     }
@@ -2139,6 +2317,22 @@ export default function App(){
   const effRel=useCallback((v)=>overrides[v._uid]||v.religion,[overrides]);
 
   const parts=useMemo(()=>[...new Set(voters.map(v=>v.part_no))].sort((a,b)=>+a-+b),[voters]);
+  useEffect(()=>{
+    if(!parts.length){
+      setBoothPart(null);
+      if(!boothSelectionTouched) setBoothPartsSelected([]);
+      return;
+    }
+    const validSelected=boothPartsSelected.filter(p=>parts.includes(p));
+    if(validSelected.length!==boothPartsSelected.length) setBoothPartsSelected(validSelected);
+    if(!boothSelectionTouched && validSelected.length===0){
+      setBoothPartsSelected([parts[0]]);
+      setBoothPart(parts[0]);
+      return;
+    }
+    if(validSelected.length>0 && !validSelected.includes(boothPart)) setBoothPart(validSelected[0]);
+    if(validSelected.length===0 && boothPart && !parts.includes(boothPart)) setBoothPart(null);
+  },[parts,boothPartsSelected,boothPart,boothSelectionTouched]);
   const ageGroups=["18–22","23–30","31–39","40–44★","45–60","60+","Unknown"];
   const insightSources=useMemo(()=>Object.values(loadedInsightsMeta||{}),[loadedInsightsMeta]);
   const analysisOnly=(!voters.length && insightSources.length>0);
@@ -2457,10 +2651,14 @@ export default function App(){
 
   // ── Core stats (on filtered set) ───────────────────────────────────────────
   // Booth voter list (must be top-level, not inside renderBooths)
+  const activeBoothParts=useMemo(
+    ()=>boothPartsSelected.filter(p=>parts.includes(p)),
+    [boothPartsSelected,parts]
+  );
   const boothVoters=useMemo(()=>{
-    if(!boothPart) return [];
+    if(!activeBoothParts.length) return [];
     return voters.filter(v=>{
-      if(v.part_no!==boothPart) return false;
+      if(!activeBoothParts.includes(v.part_no)) return false;
       if(boothRelFilter!=="all"&&(overrides[v._uid]||v.religion)!==boothRelFilter) return false;
       if(boothStatusFilter!=="all"&&v.status!==boothStatusFilter) return false;
       if(boothSearch){
@@ -2476,7 +2674,7 @@ export default function App(){
       if(typeof bv==="string")bv=bv.toLowerCase();
       return boothSortD==="asc"?(av<bv?-1:av>bv?1:0):(av>bv?-1:av<bv?1:0);
     });
-  },[boothPart,boothSearch,boothRelFilter,boothStatusFilter,boothSort,boothSortD,voters,overrides]);
+  },[activeBoothParts,boothSearch,boothRelFilter,boothStatusFilter,boothSort,boothSortD,voters,overrides]);
 
   const stats=useMemo(()=>{
     const adj=filtered.filter(v=>v.status==="Under Adjudication");
@@ -2972,9 +3170,9 @@ export default function App(){
 
   const openChartExport=useCallback((cfg)=>{
     const el=cfg?.containerId?document.getElementById(cfg.containerId):null;
-    const rect=el?.getBoundingClientRect?.();
-    const autoWidth=Math.max(700,Math.round(rect?.width||1200));
-    const autoHeight=Math.max(380,Math.round(rect?.height||520));
+    const measured=measureExportBox(el,1200,520);
+    const autoWidth=Math.max(700,measured.width);
+    const autoHeight=Math.max(380,measured.height);
     const reg=EXPORT_REGISTRY.find(r=>r.containerId===cfg?.containerId);
     const acNo=voters[0]?.ac_no||"-";
     const acName=voters[0]?.ac_name||"-";
@@ -2987,29 +3185,29 @@ export default function App(){
       height:autoHeight,
       scale:2,
       background:normalizeHexColor(C.bg,"#ffffff"),
+      headerAlign:cfg?.headerAlign||"left",
       title:cfg?.title||reg?.title||"",
       subtitle:cfg?.subtitle||reg?.subtitle||"",
       note:cfg?.note||`Chart Type: ${chartType} · ${acNote}`,
       includeTimestamp:true,
     });
-  },[theme,voters]);
+  },[voters]);
 
   const openTableExport=useCallback((cfg)=>{
     const el=cfg?.containerId?document.getElementById(cfg.containerId):null;
     const tableEl=el?.querySelector?.("table");
+    const measured=measureExportBox(el,1200,520);
     const autoWidth=Math.max(
       760,
+      measured.width,
       Math.round(tableEl?.scrollWidth||0),
-      Math.round(el?.scrollWidth||0),
       Math.round(tableEl?.getBoundingClientRect?.().width||0),
-      Math.round(el?.getBoundingClientRect?.().width||0),
     );
     const autoHeight=Math.max(
       260,
+      measured.height,
       Math.round(tableEl?.scrollHeight||0),
-      Math.round(el?.scrollHeight||0),
       Math.round(tableEl?.getBoundingClientRect?.().height||0),
-      Math.round(el?.getBoundingClientRect?.().height||0),
     );
     const reg=EXPORT_REGISTRY.find(r=>r.containerId===cfg?.containerId);
     const acNo=voters[0]?.ac_no||"-";
@@ -3049,6 +3247,7 @@ export default function App(){
           subtitle:cfg.subtitle||"",
           note:cfg.note||"",
           includeTimestamp:!!cfg.includeTimestamp,
+          headerAlign:cfg.headerAlign||"left",
         });
       }
       setChartExportModal(null);
@@ -3194,7 +3393,7 @@ export default function App(){
             </SH>
             <div id="chartAdjPieBlock">
               <div id="chartAdjPie">
-                <ResponsiveContainer width="100%" height={200}>
+                <ResizableChartFrame height={200}>
                   <PieChart>
                     <Pie data={adjPie} cx="50%" cy="50%" outerRadius={78} innerRadius={32}
                       isAnimationActive={false}
@@ -3205,7 +3404,7 @@ export default function App(){
                     </Pie>
                     <Tooltip {...TT} formatter={(v,n)=>[v+" voters",n]}/>
                   </PieChart>
-                </ResponsiveContainer>
+                </ResizableChartFrame>
               </div>
               {/* Legend */}
               <div style={{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap",marginTop:4}}>
@@ -3229,7 +3428,7 @@ export default function App(){
           <div id="chartRelStatus" style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))",gap:16}}>
             <div>
               <div style={{fontSize:11,color:C.dim,marginBottom:6,textAlign:"center"}}>Voter Counts</div>
-              <ResponsiveContainer width="100%" height={220}>
+              <ResizableChartFrame height={220}>
                 <BarChart data={relBarData} margin={{top:20,right:10,left:0,bottom:0}}>
                   <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
                   <XAxis dataKey="name" tick={{fill:C.muted,fontSize:12}}
@@ -3248,11 +3447,11 @@ export default function App(){
                     {chartPrefs.showValueLabels&&<LabelList dataKey="Deleted" position={labelPos} style={{fill:chartColor.Deleted,fontSize:10}}/>}
                   </Bar>
                 </BarChart>
-              </ResponsiveContainer>
+              </ResizableChartFrame>
             </div>
             <div>
               <div style={{fontSize:11,color:C.dim,marginBottom:6,textAlign:"center"}}>Adjudication Rate %</div>
-              <ResponsiveContainer width="100%" height={220}>
+              <ResizableChartFrame height={220}>
                 <BarChart data={relBarData} layout="vertical" margin={{top:5,right:60,left:10,bottom:5}}>
                   <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
                   <XAxis type="number" unit="%" tick={{fill:C.muted,fontSize:11}} domain={[0,"auto"]}/>
@@ -3264,7 +3463,7 @@ export default function App(){
                       style={{fill:chartColor.UnderAdj,fontSize:12,fontWeight:700}}/>}
                   </Bar>
                 </BarChart>
-              </ResponsiveContainer>
+              </ResizableChartFrame>
             </div>
           </div>
         </Panel>
@@ -3276,7 +3475,7 @@ export default function App(){
             Voter Status Composition by Religion
           </SH>
           <div id="chartDiverg">
-            <ResponsiveContainer width="100%" height={160}>
+            <ResizableChartFrame height={160}>
               <BarChart data={relBarData.filter(r=>r.total>0)} layout="vertical"
                 margin={{top:5,right:30,left:10,bottom:5}}>
                 <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
@@ -3291,7 +3490,7 @@ export default function App(){
                 </Bar>
                 <Bar dataKey="Deleted" stackId="s" fill={chartColor.Deleted} radius={[0,3,3,0]} isAnimationActive={false}/>
               </BarChart>
-            </ResponsiveContainer>
+            </ResizableChartFrame>
           </div>
         </Panel>
       </div>
@@ -3399,7 +3598,7 @@ export default function App(){
             </SH>
             <div id="chartAdjRate">
               <div style={{fontSize:11,color:C.dim,marginBottom:4}}>Adjudication Rate %</div>
-              <ResponsiveContainer width="100%" height={130}>
+              <ResizableChartFrame height={130}>
                 <BarChart data={adjBarData} layout="vertical" margin={{top:4,right:70,left:10,bottom:4}}>
                   <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
                   <XAxis type="number" unit="%" tick={{fill:C.muted,fontSize:10}} domain={[0,"auto"]}/>
@@ -3411,9 +3610,9 @@ export default function App(){
                       style={{fill:chartColor.UnderAdj,fontSize:12,fontWeight:800}}/>}
                   </Bar>
                 </BarChart>
-              </ResponsiveContainer>
+              </ResizableChartFrame>
               <div style={{fontSize:11,color:C.dim,marginTop:10,marginBottom:4}}>Deletion Rate %</div>
-              <ResponsiveContainer width="100%" height={130}>
+              <ResizableChartFrame height={130}>
                 <BarChart data={adjBarData} layout="vertical" margin={{top:4,right:70,left:10,bottom:4}}>
                   <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
                   <XAxis type="number" unit="%" tick={{fill:C.muted,fontSize:10}} domain={[0,"auto"]}/>
@@ -3425,7 +3624,7 @@ export default function App(){
                       style={{fill:chartColor.Deleted,fontSize:12,fontWeight:800}}/>}
                   </Bar>
                 </BarChart>
-              </ResponsiveContainer>
+              </ResizableChartFrame>
             </div>
           </Panel>
         </div>
@@ -3440,7 +3639,7 @@ export default function App(){
             Muslim vs Hindu: Under Adjudication — Head to Head
           </SH>
           <div id="chartH2H">
-            <ResponsiveContainer width="100%" height={180}>
+            <ResizableChartFrame height={180}>
               <BarChart
                 data={[{name:"Adj Rate %", Muslim:+(stats.mAR*100).toFixed(2), Hindu:+(stats.hAR*100).toFixed(2)},
                        {name:"Share of Adj'd", Muslim:stats.mV>0?+(stats.mAdj/(stats.adj||1)*100).toFixed(1):0,
@@ -3458,7 +3657,7 @@ export default function App(){
                   {chartPrefs.showValueLabels&&<LabelList dataKey="Hindu" position={labelPos} style={{fill:chartColor.Hindu,fontSize:12,fontWeight:800}} formatter={v=>v+"%"}/>}
                 </Bar>
               </BarChart>
-            </ResponsiveContainer>
+            </ResizableChartFrame>
           </div>
         </Panel>
       </div>
@@ -3506,7 +3705,7 @@ export default function App(){
             Age Group × Status
           </SH>
           <div id="chartAgeStatus">
-            <ResponsiveContainer width="100%" height={210}>
+            <ResizableChartFrame height={210}>
               <BarChart data={ageData}>
                 <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
                 <XAxis dataKey="ag" tick={{fill:C.muted,fontSize:10}} angle={-10} textAnchor="end" height={44}/>
@@ -3516,7 +3715,7 @@ export default function App(){
                 <Bar dataKey="Under Adj" fill={C.adj} radius={[3,3,0,0]}/>
                 <Bar dataKey="Deleted" fill={C.del} radius={[3,3,0,0]}/>
               </BarChart>
-            </ResponsiveContainer>
+            </ResizableChartFrame>
           </div>
         </Panel>
         <Panel>
@@ -3579,7 +3778,7 @@ export default function App(){
             chartType:"Line chart",
           })}>Muslim vs Hindu Adjudication % by Age Group</SH>
           <div id="chartAgeTrend">
-          <ResponsiveContainer width="100%" height={190}>
+          <ResizableChartFrame height={190}>
             <LineChart data={ageData} margin={{top:10,right:20,left:4,bottom:6}}>
               <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
               <XAxis dataKey="ag" tick={{fill:C.muted,fontSize:10}} angle={-10} textAnchor="end" height={44}/>
@@ -3599,7 +3798,7 @@ export default function App(){
                   style={{fill:C.Hindu,fontSize:10,fontWeight:700}}/>
               </Line>
             </LineChart>
-          </ResponsiveContainer>
+          </ResizableChartFrame>
           </div>
         </Panel>
       </div>
@@ -3753,9 +3952,9 @@ export default function App(){
     const groupedDomain=isPercentMetric
       ? [0,Math.max(10,Math.min(100,Math.ceil(metricMax*1.25)))]
       : [0,Math.max(5,Math.ceil(metricMax*1.15))];
-    const groupedChartHeight=Math.max(280,baseData.length*30+50);
+    const groupedChartHeight=Math.max(chartH(customAnalyticsBaseHeight-20),Math.round(baseData.length*30*chartScale)+50);
     const stackedCanvasWidth=Math.max(900,(effectiveChartMode==="stacked100"?60:52)*Math.max(1,stackedData.length));
-    const stackedChartHeight=Math.max(320,stackedData.length*32+56);
+    const stackedChartHeight=Math.max(chartH(customAnalyticsBaseHeight),Math.round(stackedData.length*32*chartScale)+56);
     const stackedMax=Math.max(0,...stackedData.map(r=>stackKeys.reduce((s,k)=>s+(Number(r[k])||0),0)));
     const stackedDomain=effectiveChartMode==="stacked100"
       ? [0,100]
@@ -3838,9 +4037,9 @@ export default function App(){
           </div>
           <div id="chartCustomAnalytics">
             {effectiveChartMode==="grouped" ? (
-              <div style={{height:groupedLongMode?420:300,overflowY:groupedLongMode?"auto":"visible",overflowX:"hidden",
+              <div style={{height:groupedLongMode?Math.max(chartH(customAnalyticsBaseHeight+120),groupedChartHeight+24):chartH(customAnalyticsBaseHeight+20),resize:"vertical",overflowY:groupedLongMode?"auto":"hidden",overflowX:"hidden",
                 border:`1px solid ${C.border}`,borderRadius:10,padding:groupedLongMode?12:0}}>
-                <div style={{height:groupedLongMode?groupedChartHeight:280}}>
+                <div style={{height:groupedLongMode?groupedChartHeight:chartH(customAnalyticsBaseHeight)}}>
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart
                       data={baseData}
@@ -3875,8 +4074,8 @@ export default function App(){
                 </div>
               </div>
             ) : (
-              <div style={{overflowX:stackedLongMode?"hidden":"auto",overflowY:stackedLongMode?"auto":"hidden",paddingBottom:4,border:`1px solid ${C.border}`,borderRadius:10,padding:stackedLongMode?12:0}}>
-                <div style={{width:stackedLongMode?"100%":stackedCanvasWidth,height:stackedLongMode?stackedChartHeight:300}}>
+              <div style={{resize:"vertical",overflowX:stackedLongMode?"hidden":"auto",overflowY:stackedLongMode?"auto":"hidden",paddingBottom:4,border:`1px solid ${C.border}`,borderRadius:10,padding:stackedLongMode?12:0}}>
+                <div style={{width:stackedLongMode?"100%":stackedCanvasWidth,height:stackedLongMode?stackedChartHeight:chartH(customAnalyticsBaseHeight)}}>
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={stackedData} layout={stackedLongMode?"vertical":"horizontal"} margin={stackedLongMode?{top:8,right:30,left:10,bottom:8}:{top:20,right:20,left:0,bottom:60}}>
                       <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
@@ -4008,11 +4207,19 @@ export default function App(){
     const popRows=partRows.map(r=>({part:r.part,...r.pop}));
     const uaRows=partRows.map(r=>({part:r.part,...r.ua}));
     const dlRows=partRows.map(r=>({part:r.part,...r.dl}));
-    const maxAbs=Math.max(10,
-      ...popRows.map(r=>dimKeys.reduce((s,k)=>s+(r[k]||0),0)),
-      ...uaRows.map(r=>dimKeys.reduce((s,k)=>s+(r[k]||0),0)),
-      ...dlRows.map(r=>dimKeys.reduce((s,k)=>s+(r[k]||0),0)),
-    );
+    const stackTotal=row=>dimKeys.reduce((s,k)=>s+(row[k]||0),0);
+    const niceAxisMax=(values,minBase)=>{
+      const rawMax=Math.max(0,...values);
+      if(rawMax<=0) return minBase;
+      const rough=Math.max(minBase,rawMax*1.15);
+      const magnitude=Math.pow(10,Math.floor(Math.log10(rough)));
+      const normalized=rough/magnitude;
+      const step=normalized<=1 ? 1 : normalized<=2 ? 2 : normalized<=5 ? 5 : 10;
+      return step*magnitude;
+    };
+    const popMax=partBarsMode==="share" ? 100 : niceAxisMax(popRows.map(stackTotal),100);
+    const uaMax=partBarsMode==="share" ? 100 : niceAxisMax(uaRows.map(stackTotal),10);
+    const dlMax=partBarsMode==="share" ? 100 : niceAxisMax(dlRows.map(stackTotal),5);
     return(
       <div style={{display:"flex",flexDirection:"column",gap:16}}>
         <Panel>
@@ -4040,36 +4247,36 @@ export default function App(){
           </div>
           <div id="chartPartwiseThreeBars" style={{display:"grid",gridTemplateColumns:"1fr",gap:10}}>
             <div style={{fontSize:11,color:C.dim}}>Whole population composition</div>
-            <ResponsiveContainer width="100%" height={210}>
+            <ResizableChartFrame height={210}>
               <BarChart data={popRows} syncId="part3sync" margin={{top:10,right:16,left:4,bottom:50}}>
                 <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
                 <XAxis dataKey="part" tick={{fill:C.muted,fontSize:10}} angle={-28} textAnchor="end" interval={0}/>
-                <YAxis tick={{fill:C.muted,fontSize:11}} domain={partBarsMode==="share"?[0,100]:[0,maxAbs]} unit={partBarsMode==="share"?"%":""}/>
+                <YAxis tick={{fill:C.muted,fontSize:11}} domain={[0,popMax]} unit={partBarsMode==="share"?"%":""}/>
                 <Tooltip {...TT}/>
                 <Legend iconSize={10} wrapperStyle={{fontSize:11}}/>
                 {dimKeys.map((k,i)=><Bar key={`pop_${k}`} dataKey={k} stackId="a" fill={dimColor(k)} radius={i===dimKeys.length-1?[4,4,0,0]:undefined}/>)}
               </BarChart>
-            </ResponsiveContainer>
+            </ResizableChartFrame>
             <div style={{fontSize:11,color:C.dim}}>Under Adjudication composition</div>
-            <ResponsiveContainer width="100%" height={210}>
+            <ResizableChartFrame height={210}>
               <BarChart data={uaRows} syncId="part3sync" margin={{top:10,right:16,left:4,bottom:50}}>
                 <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
                 <XAxis dataKey="part" tick={{fill:C.muted,fontSize:10}} angle={-28} textAnchor="end" interval={0}/>
-                <YAxis tick={{fill:C.muted,fontSize:11}} domain={partBarsMode==="share"?[0,100]:[0,maxAbs]} unit={partBarsMode==="share"?"%":""}/>
+                <YAxis tick={{fill:C.muted,fontSize:11}} domain={[0,uaMax]} unit={partBarsMode==="share"?"%":""}/>
                 <Tooltip {...TT}/>
                 {dimKeys.map((k,i)=><Bar key={`ua_${k}`} dataKey={k} stackId="b" fill={dimColor(k)} radius={i===dimKeys.length-1?[4,4,0,0]:undefined}/>)}
               </BarChart>
-            </ResponsiveContainer>
+            </ResizableChartFrame>
             <div style={{fontSize:11,color:C.dim}}>Deleted composition</div>
-            <ResponsiveContainer width="100%" height={210}>
+            <ResizableChartFrame height={210}>
               <BarChart data={dlRows} syncId="part3sync" margin={{top:10,right:16,left:4,bottom:50}}>
                 <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
                 <XAxis dataKey="part" tick={{fill:C.muted,fontSize:10}} angle={-28} textAnchor="end" interval={0}/>
-                <YAxis tick={{fill:C.muted,fontSize:11}} domain={partBarsMode==="share"?[0,100]:[0,maxAbs]} unit={partBarsMode==="share"?"%":""}/>
+                <YAxis tick={{fill:C.muted,fontSize:11}} domain={[0,dlMax]} unit={partBarsMode==="share"?"%":""}/>
                 <Tooltip {...TT}/>
                 {dimKeys.map((k,i)=><Bar key={`dl_${k}`} dataKey={k} stackId="c" fill={dimColor(k)} radius={i===dimKeys.length-1?[4,4,0,0]:undefined}/>)}
               </BarChart>
-            </ResponsiveContainer>
+            </ResizableChartFrame>
           </div>
         </Panel>
         <Panel>
@@ -4083,7 +4290,7 @@ export default function App(){
             </button>
           </div>
           <div id="chartPartTrends">
-            <ResponsiveContainer width="100%" height={320}>
+            <ResizableChartFrame height={320}>
               <LineChart data={partTrendRows} margin={{top:15,right:20,left:5,bottom:60}}>
                 <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
                 <XAxis dataKey="part" tick={{fill:C.muted,fontSize:10}} angle={-30} textAnchor="end" interval={0}/>
@@ -4094,7 +4301,7 @@ export default function App(){
                 <Line type="monotone" dataKey="hRate" name="Hindu Adj%" stroke={C.Hindu} strokeWidth={2} dot={false}/>
                 <Line type="monotone" dataKey="diffPct" name="Risk Difference (pp)" stroke={C.blue} strokeDasharray="5 3" strokeWidth={1.6} dot={false}/>
               </LineChart>
-            </ResponsiveContainer>
+            </ResizableChartFrame>
           </div>
         </Panel>
         <Panel>
@@ -4133,6 +4340,16 @@ export default function App(){
 
   // ── TAB: BOOTHS ──────────────────────────────────────────────────────────────
   const renderBooths=()=>{
+    const toggleBoothSelection=(pt)=>{
+      setBoothSelectionTouched(true);
+      setBoothPage(0);
+      setBoothSearch("");
+      setBoothPartsSelected(prev=>{
+        const next=prev.includes(pt) ? prev.filter(x=>x!==pt) : [...prev,pt].sort((a,b)=>(+a||0)-(+b||0));
+        setBoothPart(next[0]||null);
+        return next;
+      });
+    };
     const boothStats=parts.map(pt=>{
       const pv=voters.filter(v=>v.part_no===pt);
       const pm=pv.filter(v=>effRel(v)==="Muslim");
@@ -4153,6 +4370,52 @@ export default function App(){
       };
     });
 
+    const boothSelectedRows=activeBoothParts.length?voters.filter(v=>activeBoothParts.includes(v.part_no)):[];
+    const boothSelectedMuslim=boothSelectedRows.filter(v=>effRel(v)==="Muslim");
+    const boothSelectedHindu=boothSelectedRows.filter(v=>effRel(v)==="Hindu");
+    const boothSelectedUA=boothSelectedRows.filter(v=>v.status==="Under Adjudication");
+    const boothSelectedDeleted=boothSelectedRows.filter(v=>v.status==="Deleted");
+    const boothSelectedActive=boothSelectedRows.filter(v=>v.status==="Active");
+    const boothSelectedMales=boothSelectedRows.filter(v=>String(v.gender||"").toUpperCase().startsWith("M"));
+    const boothSelectedFemales=boothSelectedRows.filter(v=>String(v.gender||"").toUpperCase().startsWith("F"));
+    const boothSelectedUaMuslim=boothSelectedUA.filter(v=>effRel(v)==="Muslim");
+    const boothSelectedUaHindu=boothSelectedUA.filter(v=>effRel(v)==="Hindu");
+    const boothSelectedUaMale=boothSelectedUA.filter(v=>String(v.gender||"").toUpperCase().startsWith("M"));
+    const boothSelectedUaFemale=boothSelectedUA.filter(v=>String(v.gender||"").toUpperCase().startsWith("F"));
+    const boothAgeBuckets=["18–22","23–30","31–39","40–44★","45–60","60+"];
+    const selectedBoothLabel=activeBoothParts.length===1
+      ? `Part ${activeBoothParts[0]}`
+      : activeBoothParts.length>1
+        ? `${activeBoothParts.length} booths (${activeBoothParts.map(p=>`P${p}`).join(", ")})`
+        : "No booth selected";
+    const boothPartReligionShareRows=activeBoothParts.length?[{
+      label:"Muslim",
+      count:boothSelectedMuslim.length,
+      pct:boothSelectedRows.length?+((boothSelectedMuslim.length/boothSelectedRows.length)*100).toFixed(1):0,
+    },{
+      label:"Hindu",
+      count:boothSelectedHindu.length,
+      pct:boothSelectedRows.length?+((boothSelectedHindu.length/boothSelectedRows.length)*100).toFixed(1):0,
+    }]:[];
+    const boothPartUaReligionRows=activeBoothParts.length?[{
+      label:"Muslim",
+      count:boothSelectedUaMuslim.length,
+      pct:boothSelectedUA.length?+((boothSelectedUaMuslim.length/boothSelectedUA.length)*100).toFixed(1):0,
+    },{
+      label:"Hindu",
+      count:boothSelectedUaHindu.length,
+      pct:boothSelectedUA.length?+((boothSelectedUaHindu.length/boothSelectedUA.length)*100).toFixed(1):0,
+    }]:[];
+    const boothPartUaGenderRows=activeBoothParts.length?[{
+      label:"Male",count:boothSelectedUaMale.length,
+    },{
+      label:"Female",count:boothSelectedUaFemale.length,
+    }]:[];
+    const boothPartUaAgeRows=activeBoothParts.length?boothAgeBuckets.map(label=>({
+      label,
+      count:boothSelectedUA.filter(v=>v.ageGroup===label).length,
+    })):[];    
+
     const boothPage_data=boothVoters.slice(boothPage*PAGE_SIZE,(boothPage+1)*PAGE_SIZE);
     const totalBoothPages=Math.ceil(boothVoters.length/PAGE_SIZE);
 
@@ -4164,48 +4427,73 @@ export default function App(){
         <Panel>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
             <SH>All Booths — Summary ({parts.length} parts)</SH>
-            <div style={{display:"flex",gap:8}}>
-              <button onClick={()=>openTableExport({
-                containerId:"tblBoothSummary",
-                filename:"booths_summary_table",
-                title:"All Booths Summary",
-                subtitle:`${parts.length} parts`,
-                background:normalizeHexColor(C.bg,"#ffffff"),
-                sheetName:"Booth_Summary",
-                rows:boothStats.map(row=>({
-                  Part:row.pt,
-                  Total:row.total,
-                  Adj:row.adj,
-                  "Adj%":row.adjPct,
-                  Del:row.del,
-                  "Mus Adj%":row.mAdjPct,
-                  "Hnd Adj%":row.hAdjPct,
-                  Bias:row.biasR ?? "",
-                  "SM Adj":row.smAdj,
-                  "Manual Edits":row.overrideCount,
-                })),
-              })}
-                style={{padding:"5px 12px",background:C.panel,border:`1px solid ${C.border}`,
-                  borderRadius:6,color:C.muted,fontSize:12,cursor:"pointer",fontFamily:FONT}}>
-                🖼 Export Image
+          </div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginBottom:10,flexWrap:"wrap"}}>
+            <div style={{fontSize:11,color:C.dim}}>
+              Selected: {activeBoothParts.length ? activeBoothParts.map(p=>`P${p}`).join(", ") : "none"}
+            </div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              <button onClick={()=>{
+                setBoothSelectionTouched(true);
+                setBoothPartsSelected(parts);
+                setBoothPart(parts[0]||null);
+                setBoothPage(0);
+              }}
+                style={{padding:"5px 12px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,fontSize:12,cursor:"pointer",fontFamily:FONT}}>
+                Select All
               </button>
-              <button onClick={()=>exportXLSX(buildSummaryRows(voters),"BoothSummary.xlsx","Summary")}
-                style={{padding:"5px 12px",background:C.blue+"22",border:`1px solid ${C.blue}44`,
-                  borderRadius:6,color:C.blue,fontSize:12,cursor:"pointer",fontFamily:FONT}}>
-                📥 Export Summary
-              </button>
-              <button onClick={()=>exportFullDataset(voters.map(v=>({...v,override:overrides[v._uid]||null})))}
-                style={{padding:"5px 12px",background:C.green+"22",border:`1px solid ${C.green}44`,
-                  borderRadius:6,color:C.green,fontSize:12,cursor:"pointer",fontFamily:FONT}}>
-                📥 Export Full Dataset
+              <button onClick={()=>{
+                setBoothSelectionTouched(true);
+                setBoothPartsSelected([]);
+                setBoothPart(null);
+                setBoothPage(0);
+              }}
+                style={{padding:"5px 12px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,fontSize:12,cursor:"pointer",fontFamily:FONT}}>
+                Clear Selection
               </button>
             </div>
+          </div>
+          <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginBottom:10,flexWrap:"wrap"}}>
+            <button onClick={()=>openTableExport({
+              containerId:"tblBoothSummary",
+              filename:"booths_summary_table",
+              title:"All Booths Summary",
+              subtitle:`${parts.length} parts`,
+              background:normalizeHexColor(C.bg,"#ffffff"),
+              sheetName:"Booth_Summary",
+              rows:boothStats.map(row=>({
+                Part:row.pt,
+                Total:row.total,
+                Adj:row.adj,
+                "Adj%":row.adjPct,
+                Del:row.del,
+                "Mus Adj%":row.mAdjPct,
+                "Hnd Adj%":row.hAdjPct,
+                Bias:row.biasR ?? "",
+                "SM Adj":row.smAdj,
+                "Manual Edits":row.overrideCount,
+              })),
+            })}
+              style={{padding:"5px 12px",background:C.panel,border:`1px solid ${C.border}`,
+                borderRadius:6,color:C.muted,fontSize:12,cursor:"pointer",fontFamily:FONT}}>
+              🖼 Export Table Image
+            </button>
+            <button onClick={()=>exportXLSX(buildSummaryRows(voters),"BoothSummary.xlsx","Summary")}
+              style={{padding:"5px 12px",background:C.blue+"22",border:`1px solid ${C.blue}44`,
+                borderRadius:6,color:C.blue,fontSize:12,cursor:"pointer",fontFamily:FONT}}>
+              📥 Export Summary Workbook
+            </button>
+            <button onClick={()=>exportFullDataset(voters.map(v=>({...v,override:overrides[v._uid]||null})))}
+              style={{padding:"5px 12px",background:C.green+"22",border:`1px solid ${C.green}44`,
+                borderRadius:6,color:C.green,fontSize:12,cursor:"pointer",fontFamily:FONT}}>
+              📥 Export Full Dataset
+            </button>
           </div>
           <div id="tblBoothSummary" style={{maxHeight:300,overflowY:"auto"}}>
             <table style={{width:"100%",borderCollapse:"collapse",minWidth:500,fontSize:11}}>
               <thead style={{position:"sticky",top:0,background:C.panel}}>
                 <tr style={{borderBottom:`1px solid ${C.border}`}}>
-                  {["Part","Total","Adj","Adj%","Del","Mus Adj%","Hnd Adj%","Bias","SM Adj","Edit"].map(h=>(
+                  {["Sel","Part","Total","Adj","Adj%","Del","Mus Adj%","Hnd Adj%","Bias","SM Adj","Edit"].map(h=>(
                     <th key={h} style={{padding:"6px 8px",textAlign:h==="Part"?"left":"right",
                       color:C.dim,fontSize:10,fontWeight:700,textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>
                   ))}
@@ -4214,12 +4502,20 @@ export default function App(){
               <tbody>
                 {boothStats.map(row=>(
                   <tr key={row.pt}
-                    onClick={()=>{setBoothPart(row.pt);setBoothPage(0);}}
+                    onClick={()=>toggleBoothSelection(row.pt)}
                     style={{borderBottom:`1px solid ${C.border}22`,cursor:"pointer",
-                      background:boothPart===row.pt?C.blue+"11":""}}
-                    onMouseEnter={e=>{if(boothPart!==row.pt)e.currentTarget.style.background=C.bg;}}
-                    onMouseLeave={e=>{e.currentTarget.style.background=boothPart===row.pt?C.blue+"11":"";}}
+                      background:activeBoothParts.includes(row.pt)?C.blue+"11":""}}
+                    onMouseEnter={e=>{if(!activeBoothParts.includes(row.pt))e.currentTarget.style.background=C.bg;}}
+                    onMouseLeave={e=>{e.currentTarget.style.background=activeBoothParts.includes(row.pt)?C.blue+"11":"";}}
                   >
+                    <td style={{padding:"7px 8px",textAlign:"center"}}>
+                      <input
+                        type="checkbox"
+                        checked={activeBoothParts.includes(row.pt)}
+                        onChange={()=>toggleBoothSelection(row.pt)}
+                        onClick={e=>e.stopPropagation()}
+                      />
+                    </td>
                     <td style={{padding:"7px 8px",color:C.blue,fontWeight:700,fontFamily:MONO}}>P{row.pt}</td>
                     <td style={{padding:"7px 8px",textAlign:"right",color:C.muted}}>{row.total}</td>
                     <td style={{padding:"7px 8px",textAlign:"right",color:C.adj,fontWeight:row.adj>0?700:400}}>{row.adj}</td>
@@ -4240,33 +4536,137 @@ export default function App(){
         </Panel>
 
         {/* Booth drilldown */}
-        {boothPart&&(
+        {activeBoothParts.length>0&&(
           <Panel>
+            {(()=>{
+              const boothReportCols=Math.max(1,Math.min(2,Number(chartPrefs.boothReportCols)||2));
+              const boothReportGrid=(boothReportCols===1 || tablet) ? "1fr" : "1fr 1fr";
+              const boothCardHeight=chartH(boothReportBaseHeight);
+              return (
+                <>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap",gap:8}}>
-              <SH>Part {boothPart} — Voter List ({boothVoters.length.toLocaleString()} voters)</SH>
-              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-                <button onClick={()=>openTableExport({
-                  containerId:"tblBoothVoterList",
-                  filename:`booth_part_${boothPart}_table`,
-                  title:`Part ${boothPart} Voter List`,
-                  subtitle:`${boothVoters.length.toLocaleString()} voters`,
-                  background:normalizeHexColor(C.bg,"#ffffff"),
-                  sheetName:`Part_${boothPart}`,
-                  rows:boothVoters.map(v=>toExportRow({...v,override:overrides[v._uid]||null})),
-                })}
-                  style={{padding:"4px 10px",background:C.panel,border:`1px solid ${C.border}`,
-                    borderRadius:5,color:C.muted,fontSize:11,cursor:"pointer",fontFamily:FONT}}>
-                  🖼 Export Image
-                </button>
-                <button onClick={()=>{
-                  const pv=voters.filter(v=>v.part_no===boothPart).map(v=>toExportRow({...v,override:overrides[v._uid]||null}));
-                  exportXLSX(pv,`Part_${boothPart}_VoterRoll.xlsx`,`Part_${boothPart}`);
-                }} style={{padding:"4px 10px",background:C.blue+"22",border:`1px solid ${C.blue}44`,
-                  borderRadius:5,color:C.blue,fontSize:11,cursor:"pointer",fontFamily:FONT}}>
-                  📥 Export Part {boothPart}
-                </button>
+              <SH>{selectedBoothLabel} — Voter List ({boothVoters.length.toLocaleString()} voters)</SH>
+            </div>
+
+            <div id="chartBoothPartReport" style={{border:`1px solid ${C.border}`,borderRadius:12,padding:14,marginBottom:14,background:C.bg}}>
+              <div style={{display:"flex",justifyContent:"space-between",gap:12,alignItems:"flex-start",flexWrap:"wrap",marginBottom:12}}>
+                <div style={{fontSize:13,lineHeight:1.45,color:C.text,fontWeight:700}}>
+                  AC {voters[0]?.ac_no||"–"}: {voters[0]?.ac_name||"–"}, {selectedBoothLabel}
+                  <div style={{fontSize:12,color:C.muted,fontWeight:600,marginTop:4}}>
+                    Total: {boothSelectedRows.length} (M:{boothSelectedMales.length}, F:{boothSelectedFemales.length}) | Muslim:{boothSelectedMuslim.length}, Hindu:{boothSelectedHindu.length}
+                  </div>
+                  <div style={{fontSize:12,color:C.muted,fontWeight:600}}>
+                    Under Adj: {boothSelectedUA.length}, Deleted: {boothSelectedDeleted.length}, Unstamped: {boothSelectedActive.length}
+                  </div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:13,lineHeight:1.35,color:C.adj,fontWeight:800}}>Under Adjudication Details</div>
+                  <div style={{fontSize:12,color:C.adj,fontWeight:700}}>
+                    Total: {boothSelectedUA.length} (M:{boothSelectedUaMale.length}, F:{boothSelectedUaFemale.length}) | Muslim:{boothSelectedUaMuslim.length}, Hindu:{boothSelectedUaHindu.length}
+                  </div>
+                  <div style={{display:"flex",justifyContent:"flex-end",gap:8,flexWrap:"wrap",marginTop:8}}>
+                  <button onClick={()=>setBoothFigureSettingsOpen(true)}
+                    style={{padding:"5px 12px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,fontSize:12,cursor:"pointer",fontFamily:FONT}}>
+                    Figure Settings
+                  </button>
+                  <button onClick={()=>openChartExport({
+                    containerId:"chartBoothPartReport",
+                    filename:`booths_${activeBoothParts.join("_")}_report`,
+                    chartType:"Grouped report panel",
+                    width:1800,
+                    height:1240,
+                    scale:3,
+                    background:normalizeHexColor(C.bg,"#ffffff"),
+                    headerAlign:"left",
+                    title:`AC ${voters[0]?.ac_no||"–"}: ${voters[0]?.ac_name||"–"}, ${selectedBoothLabel}`,
+                    subtitle:`Total ${boothSelectedRows.length} (M:${boothSelectedMales.length}, F:${boothSelectedFemales.length}) · Muslim:${boothSelectedMuslim.length}, Hindu:${boothSelectedHindu.length}`,
+                    note:`Under Adj ${boothSelectedUA.length} · Deleted ${boothSelectedDeleted.length} · Unstamped ${boothSelectedActive.length}`,
+                    rows:[
+                      ...boothPartReligionShareRows.map(r=>({Section:"Overall Religion Distribution",Group:r.label,Count:r.count,Percent:r.pct})),
+                      ...boothPartUaReligionRows.map(r=>({Section:"Religion of Under Adjudication",Group:r.label,Count:r.count,Percent:r.pct})),
+                      ...boothPartUaGenderRows.map(r=>({Section:"Gender of Under Adjudication",Group:r.label,Count:r.count})),
+                      ...boothPartUaAgeRows.map(r=>({Section:"Age Group of Under Adjudication",Group:r.label,Count:r.count})),
+                    ],
+                  })}
+                    style={{padding:"5px 12px",background:C.panel,border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontSize:12,cursor:"pointer",fontFamily:FONT}}>
+                    Export Report Image
+                  </button>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{display:"grid",gridTemplateColumns:boothReportGrid,gap:14}}>
+                <div style={{height:boothCardHeight,resize:"vertical",overflow:"hidden",minHeight:220,background:C.panel,border:`1px solid ${C.border}`,borderRadius:10,padding:10}}>
+                  <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:6,textAlign:"center"}}>Overall Religion Distribution</div>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={boothPartReligionShareRows} margin={{top:20,right:16,left:6,bottom:10}}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
+                      <XAxis dataKey="label" tick={{fill:C.muted,fontSize:11}}/>
+                      <YAxis tick={{fill:C.muted,fontSize:11}} domain={[0,100]} label={{value:"Percentage of Voters (%)",angle:-90,position:"insideLeft",fill:C.dim,fontSize:11}}/>
+                      <Tooltip {...TT} formatter={(v,n,p)=>[`${v}%`,`${p?.payload?.count||0} voters`]}/>
+                      <Bar dataKey="pct" radius={[4,4,0,0]} isAnimationActive={false}>
+                        {boothPartReligionShareRows.map((r,i)=><Cell key={r.label} fill={i===0?chartColor.Muslim:chartColor.Hindu}/>)}
+                        <LabelList dataKey="pct" position="top" formatter={(v)=>`${v}%`} style={{fill:C.text,fontSize:11,fontWeight:700}}/>
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <div style={{height:boothCardHeight,resize:"vertical",overflow:"hidden",minHeight:220,background:C.panel,border:`1px solid ${C.border}`,borderRadius:10,padding:10}}>
+                  <div style={{fontSize:13,fontWeight:700,color:C.adj,marginBottom:6,textAlign:"center"}}>Religion of Voters Under Adjudication</div>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={boothPartUaReligionRows} margin={{top:20,right:16,left:6,bottom:10}}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
+                      <XAxis dataKey="label" tick={{fill:C.muted,fontSize:11}}/>
+                      <YAxis tick={{fill:C.muted,fontSize:11}} domain={[0,100]} label={{value:"Percentage of Adjudicated Voters (%)",angle:-90,position:"insideLeft",fill:C.dim,fontSize:11}}/>
+                      <Tooltip {...TT} formatter={(v,n,p)=>[`${v}%`,`${p?.payload?.count||0} voters`]}/>
+                      <Bar dataKey="pct" radius={[4,4,0,0]} isAnimationActive={false}>
+                        {boothPartUaReligionRows.map((r,i)=><Cell key={r.label} fill={i===0?"#69b9a0":"#f08a5d"}/>)}
+                        <LabelList content={({x,y,width,value,index})=>(
+                          <text x={(x||0)+(width||0)/2} y={(y||0)-8} textAnchor="middle" fill={C.text} fontSize="11" fontWeight="700">
+                            <tspan x={(x||0)+(width||0)/2} dy="0">{boothPartUaReligionRows[index]?.count||0}</tspan>
+                            <tspan x={(x||0)+(width||0)/2} dy="13">({value}%)</tspan>
+                          </text>
+                        )}/>
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <div style={{height:boothCardHeight,resize:"vertical",overflow:"hidden",minHeight:220,background:C.panel,border:`1px solid ${C.border}`,borderRadius:10,padding:10}}>
+                  <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:6,textAlign:"center"}}>Gender of Voters Under Adjudication</div>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={boothPartUaGenderRows} margin={{top:20,right:16,left:6,bottom:10}}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
+                      <XAxis dataKey="label" tick={{fill:C.muted,fontSize:11}}/>
+                      <YAxis tick={{fill:C.muted,fontSize:11}} label={{value:"Count",angle:-90,position:"insideLeft",fill:C.dim,fontSize:11}}/>
+                      <Tooltip {...TT}/>
+                      <Bar dataKey="count" radius={[4,4,0,0]} fill="#8aa0c8" isAnimationActive={false}>
+                        <LabelList dataKey="count" position="top" style={{fill:C.text,fontSize:11,fontWeight:700}}/>
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <div style={{height:boothCardHeight,resize:"vertical",overflow:"hidden",minHeight:220,background:C.panel,border:`1px solid ${C.border}`,borderRadius:10,padding:10}}>
+                  <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:6,textAlign:"center"}}>Age Group of Voters Under Adjudication</div>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={boothPartUaAgeRows} margin={{top:20,right:16,left:6,bottom:10}}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
+                      <XAxis dataKey="label" tick={{fill:C.muted,fontSize:11}}/>
+                      <YAxis tick={{fill:C.muted,fontSize:11}} label={{value:"Count",angle:-90,position:"insideLeft",fill:C.dim,fontSize:11}}/>
+                      <Tooltip {...TT}/>
+                      <Bar dataKey="count" radius={[4,4,0,0]} fill="#9ccc4d" isAnimationActive={false}>
+                        <LabelList dataKey="count" position="top" style={{fill:C.text,fontSize:11,fontWeight:700}}/>
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
               </div>
             </div>
+                </>
+              );
+            })()}
 
             {/* Booth sub-filters */}
             <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
@@ -4289,17 +4689,50 @@ export default function App(){
               {/* Part selector pills */}
               <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
                 {parts.slice(0,Math.min(parts.length,20)).map(p=>(
-                  <Pill key={p} active={boothPart===p} onClick={()=>{setBoothPart(p);setBoothPage(0);setBoothSearch("");}}>{p}</Pill>
+                  <Pill key={p} active={activeBoothParts.includes(p)} onClick={()=>toggleBoothSelection(p)}>
+                    {activeBoothParts.includes(p)?"✓ ":""}{p}
+                  </Pill>
                 ))}
                 {parts.length>20&&(
-                  <select value={boothPart}
-                    onChange={e=>{setBoothPart(e.target.value);setBoothPage(0);}}
+                  <select value={boothPart||""}
+                    onChange={e=>{
+                      const val=e.target.value;
+                      if(!val) return;
+                      setBoothSelectionTouched(true);
+                      setBoothPart(val);
+                      setBoothPartsSelected(prev=>prev.includes(val)?prev:[...prev,val].sort((a,b)=>(+a||0)-(+b||0)));
+                      setBoothPage(0);
+                    }}
                     style={{padding:"3px 8px",background:C.bg,border:`1px solid ${C.border}`,
                       borderRadius:20,color:C.blue,fontSize:12,fontFamily:FONT}}>
+                    <option value="">Add booth…</option>
                     {parts.map(p=><option key={p} value={p}>Part {p}</option>)}
                   </select>
                 )}
               </div>
+            </div>
+
+            <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginBottom:10,flexWrap:"wrap"}}>
+              <button onClick={()=>openTableExport({
+                containerId:"tblBoothVoterList",
+                filename:`booths_${activeBoothParts.join("_")}_table`,
+                title:`${selectedBoothLabel} Voter List`,
+                subtitle:`${boothVoters.length.toLocaleString()} voters`,
+                background:normalizeHexColor(C.bg,"#ffffff"),
+                sheetName:`Booths_${activeBoothParts.join("_")}`,
+                rows:boothVoters.map(v=>toExportRow({...v,override:overrides[v._uid]||null})),
+              })}
+                style={{padding:"4px 10px",background:C.panel,border:`1px solid ${C.border}`,
+                  borderRadius:5,color:C.muted,fontSize:11,cursor:"pointer",fontFamily:FONT}}>
+                🖼 Export Voter Table Image
+              </button>
+              <button onClick={()=>{
+                const pv=voters.filter(v=>activeBoothParts.includes(v.part_no)).map(v=>toExportRow({...v,override:overrides[v._uid]||null}));
+                exportXLSX(pv,`Booths_${activeBoothParts.join("_")}_VoterRoll.xlsx`,`Booths_${activeBoothParts.join("_")}`);
+              }} style={{padding:"4px 10px",background:C.blue+"22",border:`1px solid ${C.blue}44`,
+                borderRadius:5,color:C.blue,fontSize:11,cursor:"pointer",fontFamily:FONT}}>
+                📥 Export Selected Booths Workbook
+              </button>
             </div>
 
             {/* Voter table */}
@@ -4419,6 +4852,13 @@ export default function App(){
                 </span>
               </div>
             )}
+          </Panel>
+        )}
+        {!activeBoothParts.length&&(
+          <Panel>
+            <div style={{fontSize:13,color:C.dim,lineHeight:1.6}}>
+              No booth selected. Tick one or more booths above to generate combined booth graphs and the corresponding voter data table.
+            </div>
           </Panel>
         )}
       </div>
@@ -5212,17 +5652,37 @@ export default function App(){
       setNewTokName("");setNewTokVal("0.99");
     };
 
-    const exportTokens=()=>{
-      const rows=[["Token","Base Score","Current Score","Source","Religion"]];
-      Object.entries(effectiveScores).sort((a,b)=>a[0].localeCompare(b[0])).forEach(([tok,val])=>{
-        const base=NAME_SCORES[tok]??null;
-        const src=!(tok in NAME_SCORES)?"User-added":tok in tokenOverrides?"User-edited":"Training data";
-        rows.push([tok,base??"",(+val).toFixed(3),src,val>=0.65?"Muslim":val<=0.35?"Hindu":"Ambiguous"]);
+    const tokenExportRows=Object.entries({...NAME_SCORES,...tokenOverrides})
+      .sort((a,b)=>a[0].localeCompare(b[0]))
+      .map(([tok,val])=>{
+        const base=NAME_SCORES[tok]??"";
+        const current=val===-1?-1:(tokenOverrides[tok]??NAME_SCORES[tok]??0.5);
+        const source=!(tok in NAME_SCORES)?"User-added":tok in tokenOverrides?(current===-1?"Suppressed":"User-edited"):"Training data";
+        const religion=current===-1?"Suppressed":current>=0.65?"Muslim":current<=0.35?"Hindu":"Ambiguous";
+        return {
+          Token:tok,
+          "Base Score":base===""?"":+Number(base).toFixed(3),
+          "Current Score":current===-1?-1:+Number(current).toFixed(3),
+          Source:source,
+          Religion:religion,
+        };
       });
-      const csv=rows.map(r=>r.join(",")).join("\n");
-      const a=document.createElement("a");
-      a.href="data:text/csv;charset=utf-8,"+encodeURIComponent(csv);
-      a.download="token_scores.csv";a.click();
+    const exportTokens=(format="csv")=>{
+      const baseName=`token_scores_${new Date().toISOString().slice(0,10)}`;
+      if(format==="xlsx"){
+        exportXLSX(tokenExportRows,`${baseName}.xlsx`,"Token_Scores");
+        return;
+      }
+      if(format==="json"){
+        const blob=new Blob([JSON.stringify({schemaVersion:"tokens.v1",createdAt:new Date().toISOString(),tokens:tokenExportRows},null,2)],{type:"application/json;charset=utf-8"});
+        const a=document.createElement("a");
+        a.href=URL.createObjectURL(blob);
+        a.download=`${baseName}.json`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        return;
+      }
+      exportRowsCsv(tokenExportRows,baseName);
     };
 
     const scoreBar=(val)=>{
@@ -5279,6 +5739,13 @@ export default function App(){
             </button>
             <input ref={tokenFileRef} type="file" accept=".xlsx" style={{display:"none"}}
               onChange={e=>importLabeledNamesFile(e.target.files?.[0])}/>
+            <button onClick={()=>tokenPackFileRef.current?.click()}
+              style={{padding:"6px 12px",background:C.blue+"18",border:`1px solid ${C.blue}44`,
+                borderRadius:6,color:C.blue,fontSize:12,cursor:"pointer",fontFamily:FONT}}>
+              Import Token Pack
+            </button>
+            <input ref={tokenPackFileRef} type="file" accept=".csv,.xlsx,.json" style={{display:"none"}}
+              onChange={e=>importTokenPackFile(e.target.files?.[0])}/>
             {tokenImportSummary&&(
               <span style={{fontSize:11,color:C.dim,fontFamily:MONO}}>
                 {tokenImportSummary.file}: merged {tokenImportSummary.totalImported} tokens
@@ -5361,10 +5828,20 @@ export default function App(){
                 {label}
               </button>
             ))}
-            <button onClick={exportTokens}
+            <button onClick={()=>exportTokens("csv")}
               style={{padding:"5px 12px",background:"transparent",border:`1px solid ${C.border}`,
                 borderRadius:5,color:C.dim,fontSize:12,cursor:"pointer",marginLeft:"auto"}}>
               ⬇ CSV
+            </button>
+            <button onClick={()=>exportTokens("xlsx")}
+              style={{padding:"5px 12px",background:"transparent",border:`1px solid ${C.border}`,
+                borderRadius:5,color:C.dim,fontSize:12,cursor:"pointer"}}>
+              XLSX
+            </button>
+            <button onClick={()=>exportTokens("json")}
+              style={{padding:"5px 12px",background:"transparent",border:`1px solid ${C.border}`,
+                borderRadius:5,color:C.dim,fontSize:12,cursor:"pointer"}}>
+              JSON
             </button>
             {userCount>0&&(
               <button onClick={()=>{if(window.confirm(`Reset all ${userCount} edits?`))setTokenOverrides({});}}
@@ -5702,6 +6179,31 @@ Export format (boothwise + full):
   Full: Religion (Auto), Religion (Final), Confidence%, Via, Self-mapped flag
 
 Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
+      ["🧭 User Guide",
+`1. Start page:
+   • Upload raw roll XLSX files
+   • Import Session to resume someone else's work
+   • Session XLSX is usually smaller than .eimpack
+
+2. Runtime modes:
+   • Full forensic = voter rows available, editing/review/duplicates enabled
+   • Analysis-only = compact insights workbook loaded, charts/tables only
+
+3. Exports:
+   • Report Pack = charts + tables + workbook
+   • Session = portable resume file (.eimpack + companion .xlsx)
+   • Insights = compact per-part/AC analytical workbook
+   • Filtered voter workbook = current filtered voter table only
+   • Tokens = CSV / XLSX / JSON token packs
+
+4. Token memory:
+   • Review decisions can teach new tokens
+   • Token edits persist locally in browser storage
+   • Export token packs to share or restore on another machine
+
+5. Sources tab:
+   • shows raw files, insight files, overlaps, and precedence decisions
+   • raw voter-level rolls always take precedence over insight summaries for the same AC + Part`],
     ];
 
     return(
@@ -5915,7 +6417,13 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
   };
 
   // ── Render ──────────────────────────────────────────────────────────────────
-  if(!voters.length&&!loading&&!analysisOnly) return <UploadScreen onFiles={loadFiles} loading={loading} theme={theme} setTheme={setTheme}/>;
+  if(!voters.length&&!loading&&!analysisOnly) return (
+    <>
+      <UploadScreen onFiles={loadFiles} loading={loading} theme={theme} setTheme={setTheme} onImportSession={()=>sessionFileRef.current?.click()}/>
+      <input ref={sessionFileRef} type="file" accept=".eimpack,.json,.xlsx" style={{display:"none"}}
+        onChange={e=>handleImportSessionFile(e.target.files?.[0])}/>
+    </>
+  );
 
   const headerAcNo=analysisOnly ? (analysisOnlyData.partRows[0]?.ac_no||"–") : (voters[0]?.ac_no||"–");
   const headerAcName=analysisOnly ? (analysisOnlyData.partRows[0]?.ac_name||"–") : (voters[0]?.ac_name||"–");
@@ -6493,6 +7001,33 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
                   onChange={e=>setChartPrefs(p=>({...p,yAxisLabel:e.target.value}))}
                   style={{width:"100%",padding:"6px 8px",border:`1px solid ${C.border}`,borderRadius:6,background:C.bg,color:C.text,fontSize:12,boxSizing:"border-box"}}/>
               </div>
+              <div>
+                <div style={{fontSize:11,color:C.dim,marginBottom:4}}>Chart scale ({chartScale.toFixed(2)}x)</div>
+                <input type="range" min="0.75" max="2" step="0.05" value={chartScale}
+                  onChange={e=>setChartPrefs(p=>({...p,chartScale:+e.target.value}))}
+                  style={{width:"100%"}}/>
+              </div>
+              <div>
+                <div style={{fontSize:11,color:C.dim,marginBottom:4}}>Custom analytics height ({customAnalyticsBaseHeight}px)</div>
+                <input type="range" min="240" max="900" step="20" value={customAnalyticsBaseHeight}
+                  onChange={e=>setChartPrefs(p=>({...p,customAnalyticsHeight:+e.target.value}))}
+                  style={{width:"100%"}}/>
+              </div>
+              <div>
+                <div style={{fontSize:11,color:C.dim,marginBottom:4}}>Booth report chart height ({boothReportBaseHeight}px)</div>
+                <input type="range" min="240" max="900" step="20" value={boothReportBaseHeight}
+                  onChange={e=>setChartPrefs(p=>({...p,boothReportHeight:+e.target.value}))}
+                  style={{width:"100%"}}/>
+              </div>
+              <div>
+                <div style={{fontSize:11,color:C.dim,marginBottom:4}}>Booth report columns</div>
+                <select value={String(chartPrefs.boothReportCols||2)}
+                  onChange={e=>setChartPrefs(p=>({...p,boothReportCols:+e.target.value}))}
+                  style={{width:"100%",padding:"6px 8px",border:`1px solid ${C.border}`,borderRadius:6,background:C.bg,color:C.text,fontSize:12}}>
+                  <option value="1">1 column</option>
+                  <option value="2">2 columns</option>
+                </select>
+              </div>
               {[
                 ["activeColor","Active"],["underAdjColor","Under Adj"],["deletedColor","Deleted"],["muslimColor","Muslim"],["hinduColor","Hindu"],
               ].map(([k,label])=>(
@@ -6503,6 +7038,43 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
                     style={{width:"100%",height:34,padding:0,border:`1px solid ${C.border}`,borderRadius:6,background:C.bg}}/>
                 </div>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {boothFigureSettingsOpen&&(
+        <div style={{position:"fixed",inset:0,background:"#00000066",zIndex:74,display:"flex",alignItems:"center",justifyContent:"center",padding:12}}>
+          <div style={{width:"min(420px,94vw)",background:C.panel,border:`1px solid ${C.border}`,borderRadius:10,padding:14}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+              <div style={{fontSize:14,fontWeight:700,color:C.text}}>Booth Figure Settings</div>
+              <button onClick={()=>setBoothFigureSettingsOpen(false)} style={{padding:"4px 8px",background:"transparent",border:`1px solid ${C.border}`,borderRadius:6,color:C.dim,cursor:"pointer"}}>Close</button>
+            </div>
+            <div style={{fontSize:11,color:C.dim,marginBottom:10}}>
+              These controls change the live booth report figure size on screen. Export will capture the resized figure.
+            </div>
+            <div style={{display:"grid",gap:10}}>
+              <div>
+                <div style={{fontSize:11,color:C.dim,marginBottom:4}}>Chart height ({boothReportBaseHeight}px)</div>
+                <input type="range" min="240" max="900" step="20" value={boothReportBaseHeight}
+                  onChange={e=>setChartPrefs(p=>({...p,boothReportHeight:+e.target.value}))}
+                  style={{width:"100%"}}/>
+              </div>
+              <div>
+                <div style={{fontSize:11,color:C.dim,marginBottom:4}}>Height value</div>
+                <input type="number" min="240" max="900" step="20" value={boothReportBaseHeight}
+                  onChange={e=>setChartPrefs(p=>({...p,boothReportHeight:+e.target.value||320}))}
+                  style={{width:"100%",padding:"6px 8px",border:`1px solid ${C.border}`,borderRadius:6,background:C.bg,color:C.text,fontSize:12,boxSizing:"border-box"}}/>
+              </div>
+              <div>
+                <div style={{fontSize:11,color:C.dim,marginBottom:4}}>Layout</div>
+                <select value={String(chartPrefs.boothReportCols||2)}
+                  onChange={e=>setChartPrefs(p=>({...p,boothReportCols:+e.target.value}))}
+                  style={{width:"100%",padding:"6px 8px",border:`1px solid ${C.border}`,borderRadius:6,background:C.bg,color:C.text,fontSize:12}}>
+                  <option value="1">Single column</option>
+                  <option value="2">Two columns</option>
+                </select>
+              </div>
             </div>
           </div>
         </div>
@@ -6554,13 +7126,13 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
                 <>
                   <div>
                     <div style={{fontSize:11,color:C.dim,marginBottom:4}}>Width</div>
-                    <input type="number" min="400" max="4000" value={chartExportModal.width||1400}
+                    <input type="number" min="400" max="12000" value={chartExportModal.width||1400}
                       onChange={e=>setChartExportModal(m=>({...m,width:+e.target.value||1400}))}
                       style={{width:"100%",padding:"6px 8px",border:`1px solid ${C.border}`,borderRadius:6,background:C.bg,color:C.text,fontSize:12,boxSizing:"border-box"}}/>
                   </div>
                   <div>
                     <div style={{fontSize:11,color:C.dim,marginBottom:4}}>Height</div>
-                    <input type="number" min="300" max="3000" value={chartExportModal.height||800}
+                    <input type="number" min="300" max="12000" value={chartExportModal.height||800}
                       onChange={e=>setChartExportModal(m=>({...m,height:+e.target.value||800}))}
                       style={{width:"100%",padding:"6px 8px",border:`1px solid ${C.border}`,borderRadius:6,background:C.bg,color:C.text,fontSize:12,boxSizing:"border-box"}}/>
                   </div>
@@ -6575,6 +7147,15 @@ Performance: Tested up to 300 parts (~60,000+ voters) in browser.`],
                     <input type="color" value={normalizeHexColor(chartExportModal.background,normalizeHexColor(C.bg,"#ffffff"))}
                       onChange={e=>setChartExportModal(m=>({...m,background:normalizeHexColor(e.target.value,normalizeHexColor(C.bg,"#ffffff"))}))}
                       style={{width:"100%",height:34,padding:0,border:`1px solid ${C.border}`,borderRadius:6,background:C.bg}}/>
+                  </div>
+                  <div>
+                    <div style={{fontSize:11,color:C.dim,marginBottom:4}}>Header alignment</div>
+                    <select value={chartExportModal.headerAlign||"left"}
+                      onChange={e=>setChartExportModal(m=>({...m,headerAlign:e.target.value}))}
+                      style={{width:"100%",padding:"6px 8px",border:`1px solid ${C.border}`,borderRadius:6,background:C.bg,color:C.text,fontSize:12}}>
+                      <option value="left">Left</option>
+                      <option value="center">Center</option>
+                    </select>
                   </div>
                   <label style={{gridColumn:"1 / -1",fontSize:12,color:C.text,display:"flex",alignItems:"center",gap:6}}>
                     <input type="checkbox" checked={!!chartExportModal.includeTimestamp}
